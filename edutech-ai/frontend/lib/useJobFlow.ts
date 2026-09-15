@@ -38,7 +38,7 @@ export function useJobFlow(
     }
   }
 
-  async function handleDone(job: Job) {
+  async function handleDone(job: Job): Promise<Artifact | null> {
     let art: Artifact | null = (job as any).artifact || null;
     if (!art) {
       // Fallback: find the artifact for this job in the project list.
@@ -59,6 +59,7 @@ export function useJobFlow(
       setArtifact(art);
       onArtifactCreated?.(art);
     }
+    return art;
   }
 
   function reset() {

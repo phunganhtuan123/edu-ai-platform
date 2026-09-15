@@ -23,7 +23,7 @@ func main() {
 	cfg := config.Load()
 
 	db := connectDB(cfg.DatabaseURL)
-	if err := db.AutoMigrate(&models.User{}, &models.Project{}, &models.Job{}, &models.Artifact{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Project{}, &models.Job{}, &models.Artifact{}, &models.GoogleAccount{}); err != nil {
 		log.Fatalf("auto-migrate thất bại: %v", err)
 	}
 	seedAdmin(db, cfg)
@@ -41,6 +41,11 @@ func main() {
 		api.POST("/auth/register", h.Register)
 		api.POST("/auth/login", h.Login)
 		api.GET("/meta/catalog", h.Catalog)
+		api.GET("/meta/exam-parts", h.ExamParts)
+
+		// Callback của Google là ĐƯỜNG CÔNG KHAI: trình duyệt quay về đây
+		// không mang JWT, danh tính nằm trong `state` đã ký HMAC.
+		api.GET("/google/callback", h.GoogleCallback)
 
 		authed := api.Group("")
 		authed.Use(auth.Middleware(db, cfg.JWTSecret))
@@ -55,6 +60,11 @@ func main() {
 			authed.GET("/projects/:id/artifacts", h.ListProjectArtifacts)
 			authed.POST("/projects/:id/jobs", h.CreateJob)
 			authed.GET("/jobs/:id", h.GetJob)
+
+			authed.GET("/google/status", h.GoogleStatus)
+			authed.GET("/google/auth-url", h.GoogleAuthURL)
+			authed.DELETE("/google/account", h.GoogleDisconnect)
+			authed.POST("/artifacts/:id/export/google-forms", h.ExportGoogleForms)
 
 			admin := authed.Group("/admin")
 			admin.Use(auth.AdminOnly())

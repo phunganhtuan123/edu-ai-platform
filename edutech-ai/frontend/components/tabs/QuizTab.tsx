@@ -39,6 +39,7 @@ export default function QuizTab({
         <QuizResult
           content={normalizeQuiz(flow.artifact.content)}
           title={flow.artifact.title || "Trắc nghiệm"}
+          artifactId={flow.artifact.id}
         />
       </div>
     );

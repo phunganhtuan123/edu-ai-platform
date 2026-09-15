@@ -42,24 +42,31 @@ export function quizToMarkdown(quiz: QuizContent, title = "Trắc nghiệm"): st
 }
 
 export function examToMarkdown(exam: ExamContent, title = "Đề thi"): string {
-  const lines: string[] = [`# ${exam.title || title}`, ""];
-  if (exam.instruction) {
-    lines.push(`*${exam.instruction}*`, "");
-  }
-  if (exam.passage) {
-    lines.push("---", "", exam.passage, "", "---", "");
-  }
-  exam.questions.forEach((q) => {
-    const opts = q.options
-      .map((opt, j) => `${LETTERS[j] || j + 1}. ${opt}`)
-      .join("   ");
-    lines.push(`**Question ${q.number}:** ${opts}`, "");
+  const lines: string[] = [`# ${title}`, ""];
+  exam.parts.forEach((part) => {
+    if (part.part_name) lines.push(`## ${part.part_name}`, "");
+    if (part.instruction) lines.push(`*${part.instruction}*`, "");
+    if (part.title) lines.push(`**${part.title}**`, "");
+    if (part.passage) lines.push("---", "", part.passage, "", "---", "");
+    part.questions.forEach((q) => {
+      const opts = q.options
+        .map((opt, j) => `${LETTERS[j] || j + 1}. ${opt}`)
+        .join("   ");
+      if (q.prompt) {
+        lines.push(`**Question ${q.number}:** ${q.prompt}`, "", opts, "");
+      } else {
+        lines.push(`**Question ${q.number}:** ${opts}`, "");
+      }
+    });
   });
+
   lines.push("## Đáp án (dành cho giáo viên)", "");
-  exam.questions.forEach((q) => {
-    let line = `Question ${q.number}: ${LETTERS[q.correct_index] || "?"}`;
-    if (q.explanation) line += ` — ${q.explanation}`;
-    lines.push(line);
+  exam.parts.forEach((part) => {
+    part.questions.forEach((q) => {
+      let line = `Question ${q.number}: ${LETTERS[q.correct_index] || "?"}`;
+      if (q.explanation) line += ` — ${q.explanation}`;
+      lines.push(line);
+    });
   });
   lines.push("");
   return lines.join("\n");

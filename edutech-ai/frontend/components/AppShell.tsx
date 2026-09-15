@@ -70,6 +70,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
               <nav className="hidden items-center gap-1 sm:flex">
                 {navLink("/", "Projects")}
+                {navLink("/cai-dat", "Cài đặt")}
                 {user?.role === "admin" && navLink("/admin/users", "Quản trị")}
               </nav>
             </div>
@@ -105,6 +106,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="border-t border-slate-200 bg-white px-4 py-3 sm:hidden">
               <div className="flex flex-col gap-1">
                 {navLink("/", "Projects")}
+                {navLink("/cai-dat", "Cài đặt")}
                 {user?.role === "admin" && navLink("/admin/users", "Quản trị")}
                 <button
                   onClick={logout}

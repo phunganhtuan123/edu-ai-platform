@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,10 +15,12 @@ import (
 )
 
 var validJobTypes = map[string]bool{
-	models.JobTypeQuiz:     true,
-	models.JobTypeExam:     true,
-	models.JobTypeWriting:  true,
-	models.JobTypeActivity: true,
+	models.JobTypeQuiz:             true,
+	models.JobTypeExam:             true,
+	models.JobTypeWriting:          true,
+	models.JobTypeActivity:         true,
+	models.JobTypeTemplateAnalyze:  true,
+	models.JobTypeTemplateGenerate: true,
 }
 
 type createJobRequest struct {
@@ -38,7 +42,11 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		return
 	}
 	if !validJobTypes[req.Type] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type phải là quiz, exam, writing hoặc activity"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "type không hợp lệ"})
+		return
+	}
+	if msg := h.checkSourceLength(req.Type, req.Input); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 	model := strings.TrimSpace(req.Model)
@@ -90,4 +98,46 @@ func (h *Handler) GetJob(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// checkSourceLength áp giới hạn ký tự ngữ liệu (spec mục 2c): 50–20.000 mặc
+// định, chỉnh qua MIN_SOURCE_CHARS / MAX_SOURCE_CHARS. Frontend cũng chặn,
+// nhưng backend không tin frontend.
+//
+// Đếm bằng utf8.RuneCountInString chứ không phải len(): văn bản tiếng Việt
+// nhiều ký tự nhiều byte, dùng len() sẽ chặn oan.
+func (h *Handler) checkSourceLength(jobType string, input json.RawMessage) string {
+	var in struct {
+		Text       string `json:"text"`
+		SourceText string `json:"source_text"`
+		SampleText string `json:"sample_text"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(in.Text)
+	if text == "" {
+		text = strings.TrimSpace(in.SourceText)
+	}
+	if text == "" {
+		text = strings.TrimSpace(in.SampleText)
+	}
+	// Module 2 cho phép không có văn bản nguồn (chỉ đưa chủ đề).
+	if text == "" {
+		if jobType == models.JobTypeQuiz {
+			return "Cần dán văn bản nguồn"
+		}
+		if jobType == models.JobTypeTemplateAnalyze {
+			return "Cần dán bài tập mẫu"
+		}
+		return ""
+	}
+	n := utf8.RuneCountInString(text)
+	if n < h.Cfg.MinSourceChars {
+		return fmt.Sprintf("Văn bản quá ngắn: %d ký tự, tối thiểu %d", n, h.Cfg.MinSourceChars)
+	}
+	if n > h.Cfg.MaxSourceChars {
+		return fmt.Sprintf("Văn bản quá dài: %d ký tự, tối đa %d — vui lòng cắt bớt", n, h.Cfg.MaxSourceChars)
+	}
+	return ""
 }

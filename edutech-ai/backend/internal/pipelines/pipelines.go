@@ -28,17 +28,27 @@ type Result struct {
 	Warnings []string
 }
 
+// ProgressFunc là callback báo tiến độ của một job nhiều bước (module 2 sinh
+// lần lượt từng phần thi). Worker dùng nó để ghi cột jobs.progress, frontend
+// polling đọc ra và hiện "Đang soạn Phần 3/6" — không để thanh chạy câm khi
+// model local mất vài phút mỗi phần.
+type ProgressFunc func(current, total int, label string)
+
 // Run dispatches a job to its pipeline.
-func Run(client *ollama.Client, model, jobType string, input json.RawMessage) (*Result, error) {
+func Run(client *ollama.Client, model, jobType string, input json.RawMessage, progress ProgressFunc) (*Result, error) {
 	switch jobType {
 	case models.JobTypeQuiz:
 		return runQuiz(client, model, input)
 	case models.JobTypeExam:
-		return runExam(client, model, input)
+		return runExam(client, model, input, progress)
 	case models.JobTypeWriting:
 		return runWriting(client, model, input)
 	case models.JobTypeActivity:
 		return runActivity(input)
+	case models.JobTypeTemplateAnalyze:
+		return runTemplateAnalyze(client, model, input)
+	case models.JobTypeTemplateGenerate:
+		return runTemplateGenerate(client, model, input, progress)
 	default:
 		return nil, fmt.Errorf("loại job không hỗ trợ: %s", jobType)
 	}

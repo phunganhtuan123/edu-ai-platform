@@ -5,6 +5,7 @@ import { downloadFile, quizToMarkdown } from "@/lib/download";
 import { QuizContent, QuizQuestion, bloomLabel } from "@/lib/types";
 import Badge from "@/components/Badge";
 import WarningsBanner from "./WarningsBanner";
+import GoogleFormsExport from "@/components/GoogleFormsExport";
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
@@ -15,9 +16,12 @@ const LETTERS = ["A", "B", "C", "D", "E", "F"];
 export default function QuizResult({
   content,
   title = "Trắc nghiệm",
+  artifactId,
 }: {
   content: QuizContent;
   title?: string;
+  /** Có id thì hiện nút xuất Google Forms (spec mục 2b). */
+  artifactId?: number | string;
 }) {
   const [questions, setQuestions] = useState<QuizQuestion[]>(content.questions);
 
@@ -65,6 +69,7 @@ export default function QuizResult({
           >
             ⬇ Tải Markdown
           </button>
+          {artifactId != null && <GoogleFormsExport artifactId={artifactId} />}
           <button
             className="btn-secondary !py-2 text-xs"
             onClick={() =>

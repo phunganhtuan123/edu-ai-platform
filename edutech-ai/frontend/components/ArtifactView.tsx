@@ -21,6 +21,7 @@ export default function ArtifactView({ artifact }: { artifact: Artifact }) {
         <QuizResult
           content={normalizeQuiz(artifact.content)}
           title={artifact.title || "Trắc nghiệm"}
+          artifactId={artifact.id}
         />
       );
     case "exam":
@@ -28,6 +29,16 @@ export default function ArtifactView({ artifact }: { artifact: Artifact }) {
         <ExamResult
           content={normalizeExam(artifact.content)}
           title={artifact.title || "Đề thi"}
+          artifactId={artifact.id}
+        />
+      );
+    // Module 5 tạo ra đề có cùng hình dạng content với module 2.
+    case "template_generate":
+      return (
+        <ExamResult
+          content={normalizeExam(artifact.content)}
+          title={artifact.title || "Đề nhân từ mẫu"}
+          artifactId={artifact.id}
         />
       );
     case "writing":

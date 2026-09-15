@@ -12,6 +12,7 @@ type QuizInput struct {
 	Text         string `json:"text"`
 	NumQuestions int    `json:"num_questions"`
 	GradeLevel   string `json:"grade_level"`
+	Difficulty   string `json:"difficulty"` // easy | medium | hard (spec mục 2c)
 }
 
 // QuizQuestion is the normalized output shape (shared with the activity
@@ -77,7 +78,7 @@ Quy tắc bắt buộc:
 - correct_option: chép lại NGUYÊN VĂN nội dung của lựa chọn đúng (phải trùng khớp với một phần tử trong options).
 - Không hỏi kiến thức ngoài văn bản.
 - Phân bổ mức độ theo thang Bloom rút gọn: nhận biết / thông hiểu / vận dụng.
-- explanation: giải thích ngắn gọn vì sao đáp án đúng, trích ý từ văn bản; không nhắc chữ cái A/B/C/D.`
+- explanation: giải thích ngắn gọn vì sao đáp án đúng, trích ý từ văn bản; không nhắc chữ cái A/B/C/D.\n- %s`
 
 // quizUserPrompt is the edu-cli USER_PROMPT (main.py).
 const quizUserPrompt = `Văn bản:
@@ -102,7 +103,12 @@ func runQuiz(client ollamaChatter, model string, input json.RawMessage) (*Result
 		in.NumQuestions = 30
 	}
 
-	system := fmt.Sprintf(quizSystemPrompt, gradeLevelName(in.GradeLevel))
+	in.Difficulty = NormalizeDifficulty(in.Difficulty)
+	d := difficultyByKey(in.Difficulty)
+	diffLine := fmt.Sprintf(
+		"Độ khó mong muốn: %s (CEFR %s cho ngữ liệu tiếng Anh). Câu hỏi và lựa chọn giữ độ dài trung bình khoảng %d từ trở xuống.",
+		d.NameVi, d.CEFR, d.maxAvgWords)
+	system := fmt.Sprintf(quizSystemPrompt, gradeLevelName(in.GradeLevel), diffLine)
 	user := fmt.Sprintf(quizUserPrompt, strings.TrimSpace(in.Text), in.NumQuestions)
 
 	content, err := client.ChatStructured(model, system, user, quizSchema())

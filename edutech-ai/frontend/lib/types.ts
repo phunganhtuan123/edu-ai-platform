@@ -37,6 +37,8 @@ export interface Job {
   created_at?: string;
   started_at?: string;
   finished_at?: string;
+  /** Tiến độ job nhiều bước (module 2 sinh từng phần một). */
+  progress?: { current?: number; total?: number; label?: string } | null;
   artifact?: Artifact;
 }
 
@@ -104,27 +106,78 @@ export function normalizeQuiz(content: any): QuizContent {
 }
 
 // ---------- Exam ----------
+//
+// Module 2 sinh NHIỀU PHẦN trong một lần chạy (spec mục 2a), nên content là
+// một mảng phần thi. Vẫn đọc được artifact cũ (một phần, không có mảng parts).
+
+export type ExamPartKind = "cloze" | "ordering" | "reading";
 
 export interface ExamQuestion {
   number: number;
+  /** Đề câu hỏi — dạng đọc hiểu và sắp xếp câu mới có; dạng điền từ thì rỗng. */
+  prompt?: string;
   options: string[];
   correct_index: number;
   explanation?: string;
 }
 
-export interface ExamContent {
+export interface ExamSection {
+  part_id: string;
+  part_name: string;
+  kind: ExamPartKind;
   title: string;
   instruction: string;
   passage: string;
   questions: ExamQuestion[];
+  start_number: number;
+  end_number: number;
+}
+
+export interface ExamContent {
+  parts: ExamSection[];
+  difficulty: string;
+  source_mode: string;
   warnings: string[];
 }
 
-export function normalizeExam(content: any): ExamContent {
-  const c = content || {};
-  const section = c.section ?? c.exam ?? c;
-  const rawQuestions = asArray(section.questions ?? section.items);
-  const startNumber = Number(section.start_number ?? section.startNumber ?? 1) || 1;
+/** Bảng phần thi lấy từ GET /api/meta/exam-parts — KHÔNG hardcode ở frontend. */
+export interface ExamPartMeta {
+  id: string;
+  name_vi: string;
+  name_en: string;
+  kind: ExamPartKind;
+  cefr: string;
+  default_count: number;
+  /** false = số câu chưa đối chiếu đề minh hoạ Bộ GD&ĐT, phải cảnh báo giáo viên. */
+  count_confirmed: boolean;
+  enabled: boolean;
+}
+
+export interface DifficultyMeta {
+  key: string;
+  name_vi: string;
+  cefr: string;
+}
+
+export interface SourceModeMeta {
+  key: string;
+  name_vi: string;
+  hint: string;
+}
+
+export interface ExamMeta {
+  exam_parts: ExamPartMeta[];
+  difficulties: DifficultyMeta[];
+  source_modes: SourceModeMeta[];
+  source_limits: { min_chars: number; max_chars: number };
+  difficulty_notice: string;
+}
+
+function normalizeExamSection(raw: any, fallbackIndex: number): ExamSection {
+  const sec = raw || {};
+  const rawQuestions = asArray(sec.questions ?? sec.items);
+  const startNumber =
+    Number(sec.start_number ?? sec.startNumber ?? 1) || 1;
   const questions: ExamQuestion[] = rawQuestions.map((q: any, i: number) => {
     const options = asArray(q?.options ?? q?.choices).map(str);
     let correct =
@@ -137,22 +190,109 @@ export function normalizeExam(content: any): ExamContent {
         correct = found >= 0 ? found : parseInt(correct, 10) || 0;
       }
     }
-    if (typeof correct !== "number" || correct < 0 || correct >= options.length) {
+    if (
+      typeof correct !== "number" ||
+      correct < 0 ||
+      correct >= options.length
+    ) {
       correct = 0;
     }
     return {
-      number: Number(q?.number ?? q?.no ?? startNumber + i) || startNumber + i,
+      number:
+        Number(q?.exam_number ?? q?.number ?? q?.no ?? startNumber + i) ||
+        startNumber + i,
+      prompt: str(q?.prompt ?? ""),
       options,
       correct_index: correct,
       explanation: str(q?.explanation ?? ""),
     };
   });
+  const kindRaw = str(sec.kind ?? "cloze");
+  const kind: ExamPartKind =
+    kindRaw === "reading" || kindRaw === "ordering" ? kindRaw : "cloze";
   return {
-    title: str(section.title ?? c.title ?? ""),
-    instruction: str(section.instruction ?? section.instructions ?? ""),
-    passage: str(section.passage ?? section.text ?? section.body ?? ""),
+    part_id: str(sec.part_id ?? sec.section ?? `part-${fallbackIndex + 1}`),
+    part_name: str(sec.part_name ?? sec.section_name ?? ""),
+    kind,
+    title: str(sec.title ?? ""),
+    instruction: str(sec.instruction ?? sec.instructions ?? ""),
+    passage: str(sec.passage ?? sec.text ?? sec.body ?? ""),
     questions,
-    warnings: asArray(c.warnings ?? section.warnings).map(str),
+    start_number: startNumber,
+    end_number:
+      Number(sec.end_number ?? startNumber + questions.length - 1) ||
+      startNumber + questions.length - 1,
+  };
+}
+
+export function normalizeExam(content: any): ExamContent {
+  const c = content || {};
+  const warnings = asArray(c.warnings).map(str);
+  const rawParts = asArray(c.parts);
+  if (rawParts.length > 0) {
+    return {
+      parts: rawParts.map(normalizeExamSection),
+      difficulty: str(c.difficulty ?? ""),
+      source_mode: str(c.source_mode ?? ""),
+      warnings,
+    };
+  }
+  // Artifact cũ: một phần duy nhất nằm thẳng ở gốc content.
+  const legacy = c.section && typeof c.section === "object" ? c.section : c;
+  return {
+    parts: [normalizeExamSection(legacy, 0)],
+    difficulty: str(c.difficulty ?? ""),
+    source_mode: str(c.source_mode ?? ""),
+    warnings: warnings.length ? warnings : asArray(legacy.warnings).map(str),
+  };
+}
+
+// ---------- Template (module 5) ----------
+
+export type TemplateKind = "cloze" | "reading" | "ordering" | "mcq";
+
+export const TEMPLATE_KIND_LABELS: Record<TemplateKind, string> = {
+  cloze: "Điền từ vào đoạn",
+  reading: "Đọc hiểu",
+  ordering: "Sắp xếp câu",
+  mcq: "Trắc nghiệm rời",
+};
+
+export interface TemplateSection {
+  name: string;
+  kind: TemplateKind;
+  count: number;
+  has_passage: boolean;
+  notes: string;
+}
+
+export interface TemplateSpec {
+  title: string;
+  sections: TemplateSection[];
+}
+
+/** Đọc bản mô tả cấu trúc do bước phân tích trả về. */
+export function normalizeTemplateSpec(content: any): {
+  spec: TemplateSpec;
+  warnings: string[];
+} {
+  const c = content || {};
+  const raw = c.spec || {};
+  const sections: TemplateSection[] = asArray(raw.sections).map(
+    (s: any, i: number) => {
+      const kind = str(s?.kind) as TemplateKind;
+      return {
+        name: str(s?.name) || `Phần ${i + 1}`,
+        kind: TEMPLATE_KIND_LABELS[kind] ? kind : "mcq",
+        count: Number(s?.count) || 5,
+        has_passage: Boolean(s?.has_passage),
+        notes: str(s?.notes ?? ""),
+      };
+    }
+  );
+  return {
+    spec: { title: str(raw.title) || "Bài tập", sections },
+    warnings: asArray(c.warnings).map(str),
   };
 }
 

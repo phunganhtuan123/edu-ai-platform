@@ -19,6 +19,7 @@ import QuizTab from "@/components/tabs/QuizTab";
 import ExamTab from "@/components/tabs/ExamTab";
 import WritingTab from "@/components/tabs/WritingTab";
 import ActivityTab from "@/components/tabs/ActivityTab";
+import TemplateTab from "@/components/tabs/TemplateTab";
 
 const MODEL_KEY = "edutech_model";
 
@@ -26,6 +27,7 @@ const TABS = [
   { key: "quiz", label: "Trắc nghiệm", icon: "📝" },
   { key: "exam", label: "Đề thi", icon: "📄" },
   { key: "writing", label: "Chấm bài viết", icon: "✍️" },
+  { key: "template", label: "Nhân đề theo mẫu", icon: "♻️" },
   { key: "activity", label: "Hoạt động tương tác", icon: "🎮" },
 ] as const;
 
@@ -224,6 +226,14 @@ function ProjectDetail() {
           )}
           {tab === "writing" && (
             <WritingTab
+              projectId={projectId}
+              model={model}
+              gradeLevel={gradeLevel}
+              onArtifactCreated={onArtifactCreated}
+            />
+          )}
+          {tab === "template" && (
+            <TemplateTab
               projectId={projectId}
               model={model}
               gradeLevel={gradeLevel}

@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/ai-for-edu/edutech-ai/backend/internal/models"
@@ -90,7 +91,20 @@ func (p *Pool) process(jobID uint) {
 	}
 	log.Printf("worker: job %d (%s) bắt đầu, model=%s", job.ID, job.Type, job.Model)
 
-	result, err := pipelines.Run(p.client, job.Model, job.Type, json.RawMessage(job.Input))
+	// Callback ghi tiến độ vào DB để frontend polling đọc được. Lỗi ghi không
+	// làm hỏng job — tiến độ chỉ là thông tin hiển thị.
+	onProgress := func(current, total int, label string) {
+		b, err := json.Marshal(map[string]any{"current": current, "total": total, "label": label})
+		if err != nil {
+			return
+		}
+		if err := p.db.Model(&models.Job{}).Where("id = ?", job.ID).
+			Update("progress", datatypes.JSON(b)).Error; err != nil {
+			log.Printf("worker: job %d không ghi được tiến độ: %v", job.ID, err)
+		}
+	}
+
+	result, err := pipelines.Run(p.client, job.Model, job.Type, json.RawMessage(job.Input), onProgress)
 	finished := time.Now()
 	if err != nil {
 		log.Printf("worker: job %d thất bại: %v", job.ID, err)

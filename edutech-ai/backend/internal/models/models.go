@@ -35,6 +35,9 @@ const (
 	JobTypeExam     = "exam"
 	JobTypeWriting  = "writing"
 	JobTypeActivity = "activity"
+	// Module 5 chạy hai bước: phân tích cấu trúc mẫu, rồi sinh nội dung mới.
+	JobTypeTemplateAnalyze  = "template_analyze"
+	JobTypeTemplateGenerate = "template_generate"
 )
 
 type User struct {
@@ -57,13 +60,16 @@ type Project struct {
 }
 
 type Job struct {
-	ID         uint           `gorm:"primaryKey" json:"id"`
-	UserID     uint           `gorm:"index;not null" json:"user_id"`
-	ProjectID  uint           `gorm:"index;not null" json:"project_id"`
-	Type       string         `gorm:"size:16;not null" json:"type"`
-	Status     string         `gorm:"size:16;not null;default:queued;index" json:"status"`
-	Model      string         `gorm:"size:128" json:"model"`
-	Input      datatypes.JSON `gorm:"type:jsonb" json:"input"`
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	UserID    uint           `gorm:"index;not null" json:"user_id"`
+	ProjectID uint           `gorm:"index;not null" json:"project_id"`
+	Type      string         `gorm:"size:16;not null" json:"type"`
+	Status    string         `gorm:"size:16;not null;default:queued;index" json:"status"`
+	Model     string         `gorm:"size:128" json:"model"`
+	Input     datatypes.JSON `gorm:"type:jsonb" json:"input"`
+	// Progress là tiến độ của job nhiều bước: {"current":3,"total":6,"label":"..."}.
+	// Rỗng với job một bước.
+	Progress   datatypes.JSON `gorm:"type:jsonb" json:"progress,omitempty"`
 	Error      string         `gorm:"type:text" json:"error,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
 	StartedAt  *time.Time     `json:"started_at,omitempty"`
@@ -74,8 +80,23 @@ type Artifact struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
 	JobID     uint           `gorm:"index;not null" json:"job_id"`
 	ProjectID uint           `gorm:"index;not null" json:"project_id"`
-	Type      string         `gorm:"size:16;not null" json:"type"`
+	Type      string         `gorm:"size:32;not null" json:"type"`
 	Title     string         `gorm:"size:512" json:"title"`
 	Content   datatypes.JSON `gorm:"type:jsonb" json:"content"`
-	CreatedAt time.Time      `json:"created_at"`
+	// GoogleForm ghi lại lần xuất Google Forms gần nhất của artifact này:
+	// {form_id, edit_url, responder_url, exported_at}. Rỗng nếu chưa xuất.
+	GoogleForm datatypes.JSON `gorm:"type:jsonb" json:"google_form,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// GoogleAccount là tài khoản Google mà MỘT giáo viên tự nối để xuất đề sang
+// Google Forms. Refresh token lưu đã mã hoá (AES-GCM, khoá TOKEN_ENCRYPTION_KEY)
+// và không bao giờ trả ra API — kể cả cho admin.
+type GoogleAccount struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	UserID          uint      `gorm:"uniqueIndex;not null" json:"user_id"`
+	GoogleEmail     string    `gorm:"size:255" json:"google_email"`
+	RefreshTokenEnc string    `gorm:"type:text;not null" json:"-"`
+	Scopes          string    `gorm:"type:text" json:"scopes"`
+	ConnectedAt     time.Time `json:"connected_at"`
 }

@@ -49,6 +49,9 @@ export default function JobProgress({
       try {
         const data: any = await apiGet(`/jobs/${jobId}`);
         const j: Job = (data && (data.job || data)) as Job;
+        // GET /jobs/:id trả {job, artifact}; gắn artifact vào job để phía gọi
+        // không phải đi lấy lại từ danh sách artifact của project.
+        if (j && data?.artifact && !j.artifact) j.artifact = data.artifact;
         if (stopped) return;
         setPollError(null);
         setJob(j);
@@ -75,6 +78,13 @@ export default function JobProgress({
   }, [jobId]);
 
   const status = job?.status;
+  // Tiến độ từng phần: module 2 có thể chạy 6 phần liên tiếp, mỗi phần vài
+  // phút — không được để thanh chạy câm suốt.
+  const progress = job?.progress || null;
+  const pctDone =
+    progress && progress.total
+      ? Math.round((((progress.current ?? 1) - 1) / progress.total) * 100)
+      : null;
 
   if (status === "failed") {
     return (
@@ -108,8 +118,25 @@ export default function JobProgress({
       <Spinner />
       <div>
         <p className="font-semibold text-slate-900">
-          {queued ? "Đang xếp hàng…" : runningLabel}
+          {queued
+            ? "Đang xếp hàng…"
+            : progress?.label
+              ? progress.label
+              : runningLabel}
         </p>
+        {!queued && progress?.total ? (
+          <>
+            <p className="mt-1 text-sm font-medium text-indigo-700">
+              Phần {progress.current ?? 1}/{progress.total}
+            </p>
+            <div className="mx-auto mt-2 h-1.5 w-56 overflow-hidden rounded-full bg-slate-200">
+              <div
+                className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                style={{ width: `${pctDone ?? 0}%` }}
+              />
+            </div>
+          </>
+        ) : null}
         <p className="mt-1 text-sm text-slate-500">
           {queued
             ? "Job đang chờ đến lượt xử lý trên server AI."

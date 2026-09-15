@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/ai-for-edu/edutech-ai/backend/internal/pipelines"
 )
 
 // CatalogEntry is one subject or grade level with its enabled flag. The
@@ -56,4 +58,26 @@ func GradeLevelEnabled(key string) bool {
 		}
 	}
 	return false
+}
+
+// ExamParts serves GET /api/meta/exam-parts — bảng phần thi THPT (spec mục 2a),
+// mức độ khó, và giới hạn ký tự ngữ liệu. Frontend render từ đây; KHÔNG
+// hardcode danh sách phần thi ở frontend, nếu không hai nơi sẽ lệch nhau đúng
+// như hai app của EdTech Corner.
+func (h *Handler) ExamParts(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"exam_parts":   pipelines.ExamParts,
+		"difficulties": pipelines.DifficultyLevels,
+		"source_modes": []gin.H{
+			{"key": pipelines.SourceModeKeep, "name_vi": "Giữ nguyên văn bản gốc",
+				"hint": "Dùng đúng đoạn văn bạn dán làm ngữ liệu."},
+			{"key": pipelines.SourceModeRewrite, "name_vi": "Để AI viết lại",
+				"hint": "Sinh đoạn mới cùng chủ đề — dùng khi ngữ liệu gốc có bản quyền hoặc học sinh đã đọc rồi."},
+		},
+		"source_limits": gin.H{
+			"min_chars": h.Cfg.MinSourceChars,
+			"max_chars": h.Cfg.MaxSourceChars,
+		},
+		"difficulty_notice": "Mức độ khó do AI diễn giải nên có thể lệch — giáo viên vui lòng duyệt lại.",
+	})
 }
