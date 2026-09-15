@@ -221,7 +221,7 @@ export function normalizeModels(data: any): string[] {
 
 export function normalizeCatalog(data: any): Catalog {
   const entry = (e: any): CatalogEntry => ({
-    code: str(e?.code ?? e?.id ?? e?.value),
+    code: str(e?.code ?? e?.key ?? e?.id ?? e?.value),
     name: str(e?.name ?? e?.label ?? e?.title),
     enabled: Boolean(e?.enabled),
   });

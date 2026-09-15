@@ -1,0 +1,19 @@
+# Deploy override cho host x299:
+# - 3000/8080 trên host đã bị chiếm -> frontend :3020, backend :8086
+# - Ollama chỉ bind 127.0.0.1 nên backend chạy network_mode host để gọi được 127.0.0.1:11434
+# - db publish 127.0.0.1:5434 để backend (host network) kết nối
+services:
+  db:
+    ports:
+      - "127.0.0.1:5434:5432"
+  backend:
+    network_mode: host
+    ports: !reset []
+    extra_hosts: !reset []
+    environment:
+      PORT: "8086"
+      DATABASE_URL: postgres://edutech:${POSTGRES_PASSWORD:-edutech}@127.0.0.1:5434/edutech?sslmode=disable
+      OLLAMA_URL: http://127.0.0.1:11434
+  frontend:
+    ports: !override
+      - "3020:3000"
