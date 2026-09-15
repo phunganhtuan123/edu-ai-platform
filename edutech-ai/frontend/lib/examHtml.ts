@@ -322,43 +322,180 @@ window.addEventListener('load', function () {
 </html>`;
 }
 
-/** Bản in: không có ô chọn, có bảng đáp án cuối đề cho giáo viên. */
-export function buildPrintHtml(content: ExamContent, title = "Đề thi"): string {
-  const keyRows = content.parts
-    .flatMap((p) => p.questions)
+/**
+ * CSS bản in — KHÔNG dùng chung skin với bản HTML tương tác.
+ *
+ * Đề in ra là để photo phát cho học sinh: đen trắng, một cột, không nền màu,
+ * không khung. Nền màu và viền đậm của bản web in ra vừa tốn mực vừa xấu.
+ */
+const PRINT_CSS = `
+@page{size:A4;margin:20mm}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Helvetica,Arial,sans-serif;color:#000;background:#fff;font-size:11pt;line-height:1.45}
+h1.doc-title{text-align:center;font-size:17pt;font-weight:700;margin-bottom:10pt}
+h2.doc-part{text-align:center;font-size:13pt;font-weight:700;margin-bottom:26pt}
+.meta{margin-bottom:22pt}
+.meta-row{display:flex;justify-content:space-between;margin-bottom:10pt}
+.meta-row span{white-space:nowrap}
+h3.section{font-size:11pt;font-weight:700;margin:20pt 0 10pt}
+.instructions-list{margin:0 0 4pt 18pt}
+.instructions-list li{list-style:none;margin-bottom:6pt}
+.instructions-list li:before{content:"• ";}
+.passage-title{font-weight:700;margin:12pt 0 6pt}
+.passage-body{white-space:pre-wrap;text-align:justify;margin-bottom:14pt}
+.part-instruction{font-style:italic;margin-bottom:12pt}
+.question{margin-bottom:16pt;break-inside:avoid;page-break-inside:avoid}
+.q-title{font-weight:700;margin-bottom:6pt}
+.q-text{margin-bottom:6pt}
+.items-label{font-style:italic;font-size:9.5pt;margin-bottom:3pt}
+.item{font-style:italic;font-size:9.5pt;margin-left:20pt;line-height:1.5}
+.choice{margin-left:24pt;margin-top:4pt;font-size:10.5pt}
+/* Phiếu trả lời luôn sang trang mới */
+.answer-sheet{break-before:page;page-break-before:always}
+.bubble-group{display:inline-block;margin:0 22pt 18pt 0;text-align:center;vertical-align:top}
+.bubble-no{font-weight:700;font-size:10pt;margin-bottom:3pt;text-align:left}
+.bubble-row{white-space:nowrap}
+.bubble{display:inline-block;width:15pt;height:15pt;border:1pt solid #000;border-radius:50%}
+.bubble-letters{margin-top:2pt;font-size:8.5pt;letter-spacing:0}
+.bubble-letters span{display:inline-block;width:15pt;text-align:center}
+`;
+
+function twoDigitDate(d: Date): string {
+  return d.getDate() + "/" + (d.getMonth() + 1) + "/" + d.getFullYear();
+}
+
+/** Các lựa chọn dạng "( ) A. ..." để học sinh tích tay trên giấy. */
+function printChoices(options: string[]): string {
+  return options
     .map(
-      (q) =>
-        `<span style="display:inline-block;min-width:110px;margin:2px 0">Câu ${q.number}: <strong>${
-          LETTERS[q.correct_index] || "?"
-        }</strong></span>`
+      (opt, j) =>
+        `<div class="choice">( ) ${LETTERS[j] || j + 1}. ${esc(opt)}</div>`
     )
     .join("");
+}
+
+function printQuestion(part: ExamSection, q: ExamSection["questions"][number]): string {
+  let body = "";
+  if (part.kind === "ordering" && q.prompt) {
+    body =
+      `<div class="q-text">Arrange the following sentences/utterances to make a meaningful exchange.</div>` +
+      `<div class="items-label">Items to arrange:</div>` +
+      q.prompt
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => `<div class="item">${esc(line)}</div>`)
+        .join("");
+  } else if (q.prompt) {
+    body = `<div class="q-text">${esc(q.prompt)}</div>`;
+  } else {
+    body = `<div class="q-text">Choose the best option for blank (${q.number}).</div>`;
+  }
+  return `<div class="question">
+  <div class="q-title">Question ${q.number}</div>
+  ${body}
+  ${printChoices(q.options)}
+</div>`;
+}
+
+/**
+ * Bản in đề thi — theo đúng mẫu đề giấy: đầu đề, ô Name/Class/Time,
+ * INSTRUCTIONS, QUESTIONS, và PHIẾU TRẢ LỜI tô tròn ở trang cuối.
+ *
+ * CỐ Ý KHÔNG IN ĐÁP ÁN: bản này để phát cho học sinh. Giáo viên xem đáp án
+ * trong app (bấm Nộp bài) hoặc trong file HTML xuất ra.
+ */
+export function buildPrintHtml(content: ExamContent, title = "Đề thi"): string {
+  const all = content.parts.flatMap((p) =>
+    p.questions.map((q) => q.number)
+  );
+  const partLabel =
+    content.parts.length === 1
+      ? content.parts[0].part_name
+      : `${content.parts.length} phần · ${all.length} câu`;
+
+  // Đề một phần: tên phần đã nằm ngay dưới đầu đề rồi, in lại lần nữa dưới
+  // mục QUESTIONS là thừa. Nhiều phần thì mới cần tiêu đề phân tách.
+  const showPartHeadings = content.parts.length > 1;
+
+  const questionsHtml = content.parts
+    .map((part) => {
+      const head = [
+        showPartHeadings && part.part_name
+          ? `<h3 class="section">${esc(part.part_name)}</h3>`
+          : "",
+        part.instruction
+          ? `<div class="part-instruction">${esc(part.instruction)}</div>`
+          : "",
+        part.title ? `<div class="passage-title">${esc(part.title)}</div>` : "",
+        part.passage
+          ? `<div class="passage-body">${esc(part.passage)}</div>`
+          : "",
+      ].join("");
+      return head + part.questions.map((q) => printQuestion(part, q)).join("");
+    })
+    .join("");
+
+  const bubbles = all
+    .map(
+      (n) => `<div class="bubble-group">
+  <div class="bubble-no">${n}</div>
+  <div class="bubble-row">${LETTERS.slice(0, 4)
+    .map(() => `<span class="bubble"></span>`)
+    .join("")}</div>
+  <div class="bubble-letters">${LETTERS.slice(0, 4)
+    .map((l) => `<span>${l}</span>`)
+    .join("")}</div>
+</div>`
+    )
+    .join("");
+
+  const today = twoDigitDate(new Date());
 
   return `<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
 <title>${esc(title)}</title>
-<style>${SKIN_CSS}
-@page{margin:14mm}
-body{background:#fff;background-image:none;max-width:none;padding:0}
-.passage-section{position:static;max-height:none;box-shadow:none}
-.questions-section{box-shadow:none}
-.part{break-inside:avoid}
-.question-block{break-inside:avoid}
-.answer-key{margin-top:24px;padding:16px;border:1px solid var(--rule);background:#fafaf7;break-before:page}
-.answer-key h3{font-family:var(--serif);color:var(--navy);margin-bottom:10px}
-</style>
+<style>${PRINT_CSS}</style>
 </head>
 <body>
-<div class="header">
-  <div class="eyebrow">Đề thi · Exam</div>
-  <h1>${esc(title)}</h1>
+<h1 class="doc-title">${esc(title)} - English Test</h1>
+${partLabel ? `<h2 class="doc-part">${esc(partLabel)}</h2>` : ""}
+
+<div class="meta">
+  <div class="meta-row"><span>Date: ${today}</span></div>
+  <div class="meta-row">
+    <span>Name: _______________________________</span>
+    <span>Class: ______________</span>
+  </div>
+  <div class="meta-row"><span>Time: ______ minutes</span></div>
 </div>
-${content.parts.map((p) => renderPart(p, false)).join("\n")}
-<div class="answer-key">
-  <h3>Đáp án (dành cho giáo viên)</h3>
-  <div>${keyRows}</div>
+
+<h3 class="section">INSTRUCTIONS</h3>
+<ul class="instructions-list">
+  <li>Read all questions carefully before answering</li>
+  <li>Choose the best answer for each question</li>
+  <li>Mark your answers clearly on the answer sheet</li>
+  <li>Use only pencil or black pen</li>
+</ul>
+
+<h3 class="section">QUESTIONS</h3>
+${questionsHtml}
+
+<div class="answer-sheet">
+  <h1 class="doc-title">ANSWER SHEET</h1>
+  ${partLabel ? `<h2 class="doc-part">${esc(partLabel)}</h2>` : ""}
+  <div class="meta">
+    <div class="meta-row">
+      <span>Name: _______________________________</span>
+      <span>Class: ______________</span>
+    </div>
+    <div class="meta-row">
+      <span>Date: ${today}</span>
+      <span>Score: ______ / ${all.length}</span>
+    </div>
+  </div>
+  <div>${bubbles}</div>
 </div>
 </body>
 </html>`;
