@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đề THPT — 2 phần</title>
+<style>
+:root{--paper:#f6f4ec;--panel:#fff;--ink:#22201b;--faint:#7d786c;--rule:#d8d3c4;
+--navy:#17233f;--seal:#b3311f;--sealdark:#7f2013;--pass:#2f6b47;
+--serif:Georgia,'Times New Roman',serif;
+--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--sans);line-height:1.6;color:var(--ink);max-width:1200px;margin:0 auto;
+padding:20px;background-color:var(--paper);
+background-image:repeating-linear-gradient(90deg,transparent 0 26px,rgba(23,35,63,.025) 26px 27px)}
+.header{background:var(--navy);color:#f4f1e6;border-bottom:3px solid var(--seal);padding:22px 26px;margin-bottom:24px}
+.header .eyebrow{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#f0d7c4;margin-bottom:6px}
+.header h1{font-family:var(--serif);font-size:1.7rem}
+.header h2{font-family:var(--serif);font-style:italic;font-weight:400;font-size:1rem;opacity:.85}
+.part{margin-bottom:34px}
+.part-name{font-family:var(--serif);color:var(--navy);font-size:1.05rem;font-weight:700;
+border-bottom:1px solid var(--rule);padding-bottom:8px;margin-bottom:6px}
+.instructions{font-family:var(--serif);font-style:italic;color:var(--ink);margin:10px 0 14px}
+/* Câu hỏi trái · đoạn văn phải */
+.quiz-container{display:grid;grid-template-columns:1fr 1fr;gap:30px}
+.quiz-container.no-passage{grid-template-columns:1fr}
+@media(max-width:768px){.quiz-container{grid-template-columns:1fr}
+.passage-section{position:static!important;max-height:none!important;order:-1}}
+.passage-section{grid-column:2;background:var(--panel);border:1px solid var(--rule);padding:25px;
+position:sticky;top:20px;max-height:80vh;overflow-y:auto;
+box-shadow:0 1px 0 var(--rule),0 10px 24px rgba(23,35,63,.06)}
+.passage-section h3{font-family:var(--serif);color:var(--faint);font-size:.8rem;letter-spacing:.12em;
+text-transform:uppercase;border-bottom:1px solid var(--rule);padding-bottom:10px;margin-bottom:15px}
+.passage-content{background:var(--paper);border:1px solid var(--rule);padding:20px;
+white-space:pre-wrap;font-family:var(--serif);font-size:.98rem;line-height:1.8}
+.questions-section{grid-column:1;grid-row:1;background:var(--panel);border:1px solid var(--rule);padding:25px;
+box-shadow:0 1px 0 var(--rule),0 10px 24px rgba(23,35,63,.06)}
+.quiz-container.no-passage .questions-section{grid-column:1}
+.question-block{border-bottom:1px solid var(--rule);padding:16px 4px}
+.question-block:last-child{border-bottom:0}
+.question-number{font-family:var(--serif);color:var(--navy);font-size:.95rem;font-weight:700;margin-bottom:10px}
+.item-type{background:transparent;color:var(--faint);border:1px solid var(--rule);padding:2px 8px;
+font-size:.7rem;font-weight:600;letter-spacing:.04em;margin-left:10px}
+.question-text{font-family:var(--serif);margin-bottom:12px}
+.jumbled-items{background:var(--paper);border:1px solid var(--rule);padding:15px;margin-bottom:14px}
+.jumbled-item{background:var(--panel);border:1px solid var(--rule);padding:8px 12px;margin:5px 0;
+font-family:var(--serif);font-size:.9rem}
+.option{display:flex;align-items:flex-start;border:1px solid var(--rule);background:var(--panel);
+padding:9px 12px;margin:8px 0;transition:border-color .15s,background .15s}
+.option:has(input:checked){border-color:var(--seal);background:#fbf3f0}
+.option input[type=radio]{margin-right:10px;margin-top:3px;width:16px;height:16px;accent-color:var(--seal)}
+.option label{cursor:pointer;font-size:.95rem;line-height:1.5}
+.controls{text-align:center;margin:30px 0}
+.btn{padding:12px 24px;margin:0 8px;border:none;font-size:1rem;font-weight:600;cursor:pointer;
+font-family:var(--serif)}
+.btn-primary{background:var(--seal);color:#fff;box-shadow:0 2px 0 var(--sealdark)}
+.btn-primary:hover{background:var(--sealdark)}
+.btn-secondary{background:var(--navy);color:#fff}
+.results{background:var(--panel);border:1px solid var(--rule);padding:25px;margin-top:30px}
+.score{text-align:center;font-size:1.5rem;font-weight:700;font-family:var(--serif);padding:20px;margin-bottom:20px}
+.score.good{background:#eef5f0;color:var(--pass);border:1px solid #bcd9c7}
+.score.average{background:#fbf6ec;color:#8a6a1e;border:1px solid #e6d6ad}
+.score.poor{background:#fbf1ef;color:var(--seal);border:1px solid #e6c3bc}
+.feedback-item{margin:15px 0;padding:15px;border-left:4px solid}
+.feedback-item.correct{background:#f1f6f2;border-left-color:var(--pass)}
+.feedback-item.incorrect{background:#fbf1ef;border-left-color:var(--seal)}
+.feedback-question{font-family:var(--serif);color:var(--navy);font-weight:700;margin-bottom:8px}
+.feedback-explanation{margin-top:10px;padding:10px;background:var(--paper);border:1px solid var(--rule);font-size:.9rem}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="eyebrow">Đề thi · Exam</div>
+  <h1>Đề THPT — 2 phần</h1>
+  <h2>2 phần · 3 câu</h2>
+</div>
+
+<form id="quizForm">
+<div class="part">
+  <div class="part-name">Phần 1 — Điền từ</div>
+  <p class="instructions">Read the following notice...</p>
+  <div class="quiz-container">
+    <div class="questions-section"><div class="question-block">
+  <p class="question-number">Question 1<span class="item-type">Word form</span></p>
+  <p class="question-text">Chọn đáp án đúng cho chỗ trống (1).</p>
+  <div class="options"><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_1" value="A" id="q_p1_cloze_notice_1_A">
+  <label for="q_p1_cloze_notice_1_A"><strong>A.</strong> repetition</label>
+</div><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_1" value="B" id="q_p1_cloze_notice_1_B">
+  <label for="q_p1_cloze_notice_1_B"><strong>B.</strong> repeat</label>
+</div><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_1" value="C" id="q_p1_cloze_notice_1_C">
+  <label for="q_p1_cloze_notice_1_C"><strong>C.</strong> repeatedly</label>
+</div><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_1" value="D" id="q_p1_cloze_notice_1_D">
+  <label for="q_p1_cloze_notice_1_D"><strong>D.</strong> repetitive</label>
+</div></div>
+</div>
+<div class="question-block">
+  <p class="question-number">Question 2<span class="item-type">Preposition</span></p>
+  <p class="question-text">Chọn đáp án đúng cho chỗ trống (2).</p>
+  <div class="options"><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_2" value="A" id="q_p1_cloze_notice_2_A">
+  <label for="q_p1_cloze_notice_2_A"><strong>A.</strong> on</label>
+</div><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_2" value="B" id="q_p1_cloze_notice_2_B">
+  <label for="q_p1_cloze_notice_2_B"><strong>B.</strong> in</label>
+</div><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_2" value="C" id="q_p1_cloze_notice_2_C">
+  <label for="q_p1_cloze_notice_2_C"><strong>C.</strong> at</label>
+</div><div class="option">
+  <input type="radio" name="q_p1_cloze_notice_2" value="D" id="q_p1_cloze_notice_2_D">
+  <label for="q_p1_cloze_notice_2_D"><strong>D.</strong> for</label>
+</div></div>
+</div></div>
+    <div class="passage-section">
+      <h3>Passage with Blanks</h3>
+      <p style="font-family:var(--serif);font-weight:700;margin-bottom:10px">FAMILY TRADITIONS</p>
+      <div class="passage-content">Family traditions are activities (1)_____ done together, and (2)_____ the year.</div>
+    </div>
+  </div>
+</div>
+<div class="part">
+  <div class="part-name">Phần 3 — Sắp xếp câu</div>
+  <p class="instructions">Mark the letter...</p>
+  <div class="quiz-container no-passage">
+    <div class="questions-section"><div class="question-block">
+  <p class="question-number">Question 3</p>
+  <div class="jumbled-items"><div class="jumbled-item">a. Sure, see you.</div><div class="jumbled-item">b. Are you free?</div><div class="jumbled-item">c. Great.</div><div class="jumbled-item">d. Yes, after five.</div></div><p class="question-text">Chọn thứ tự đúng:</p>
+  <div class="options"><div class="option">
+  <input type="radio" name="q_p3_ordering_3" value="A" id="q_p3_ordering_3_A">
+  <label for="q_p3_ordering_3_A"><strong>A.</strong> b - d - c - a</label>
+</div><div class="option">
+  <input type="radio" name="q_p3_ordering_3" value="B" id="q_p3_ordering_3_B">
+  <label for="q_p3_ordering_3_B"><strong>B.</strong> a - b - c - d</label>
+</div><div class="option">
+  <input type="radio" name="q_p3_ordering_3" value="C" id="q_p3_ordering_3_C">
+  <label for="q_p3_ordering_3_C"><strong>C.</strong> d - a - b - c</label>
+</div><div class="option">
+  <input type="radio" name="q_p3_ordering_3" value="D" id="q_p3_ordering_3_D">
+  <label for="q_p3_ordering_3_D"><strong>D.</strong> c - b - a - d</label>
+</div></div>
+</div></div>
+    
+  </div>
+</div>
+  <div class="controls">
+    <button type="submit" class="btn btn-primary">Nộp bài</button>
+    <button type="button" class="btn btn-secondary" onclick="resetQuiz()">Làm lại</button>
+  </div>
+</form>
+
+<div id="results" class="results hidden">
+  <div id="scoreDisplay" class="score"></div>
+  <div id="detailedFeedback"></div>
+  <div class="controls">
+    <button type="button" class="btn btn-primary" onclick="resetQuiz()">Làm lại</button>
+  </div>
+</div>
+
+<script>
+var ANSWERS = {"q_p1_cloze_notice_1":{"number":1,"letter":"C","partName":"Phần 1 — Điền từ","testedPoint":"Word form","explanation":"Cần trạng từ bổ nghĩa động từ."},"q_p1_cloze_notice_2":{"number":2,"letter":"B","partName":"Phần 1 — Điền từ","testedPoint":"Preposition","explanation":"Dùng \"in\" với khoảng thời gian dài."},"q_p3_ordering_3":{"number":3,"letter":"A","partName":"Phần 3 — Sắp xếp câu","testedPoint":"","explanation":"Hỏi trước, đáp sau."}};
+var STORAGE_KEY = "exam_progress_Đề THPT — 2 phần";
+
+document.getElementById('quizForm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var data = new FormData(this), picked = {}, score = 0;
+  var keys = Object.keys(ANSWERS);
+  data.forEach(function (v, k) { picked[k] = v; });
+  keys.forEach(function (k) { if (picked[k] === ANSWERS[k].letter) score++; });
+
+  var pct = keys.length ? Math.round((score / keys.length) * 100) : 0;
+  var cls = pct >= 80 ? 'good' : pct >= 60 ? 'average' : 'poor';
+  var el = document.getElementById('scoreDisplay');
+  el.className = 'score ' + cls;
+  el.innerHTML = '<div>Kết quả: ' + score + '/' + keys.length + ' (' + pct + '%)</div>';
+
+  var html = '<h3 style="font-family:var(--serif);margin-bottom:10px">Chi tiết từng câu</h3>';
+  keys.forEach(function (k) {
+    var a = ANSWERS[k], mine = picked[k], ok = mine === a.letter;
+    html += '<div class="feedback-item ' + (ok ? 'correct' : 'incorrect') + '">' +
+      '<div class="feedback-question">Câu ' + a.number + ' ' + (ok ? '✓' : '✗') +
+      (a.testedPoint ? '<span class="item-type">' + a.testedPoint + '</span>' : '') + '</div>' +
+      '<div>Bạn chọn: <strong>' + (mine || 'chưa chọn') +
+      '</strong> · Đáp án: <strong>' + a.letter + '</strong></div>' +
+      (a.explanation ? '<div class="feedback-explanation">' + a.explanation + '</div>' : '') +
+      '</div>';
+  });
+  document.getElementById('detailedFeedback').innerHTML = html;
+
+  document.getElementById('quizForm').style.display = 'none';
+  document.getElementById('results').classList.remove('hidden');
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+});
+
+function resetQuiz() {
+  document.getElementById('quizForm').reset();
+  document.getElementById('quizForm').style.display = 'block';
+  document.getElementById('results').classList.add('hidden');
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Nhớ bài đang làm dở. Bọc try/catch: chế độ riêng tư chặn localStorage và sẽ
+// ném lỗi, không được để việc đó làm hỏng cả trang.
+document.addEventListener('change', function (e) {
+  if (e.target && e.target.type === 'radio') {
+    try {
+      var p = {};
+      new FormData(document.getElementById('quizForm')).forEach(function (v, k) { p[k] = v; });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+    } catch (err) {}
+  }
+});
+window.addEventListener('load', function () {
+  try {
+    var saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return;
+    var p = JSON.parse(saved);
+    Object.keys(p).forEach(function (k) {
+      var el = document.querySelector('input[name="' + k + '"][value="' + p[k] + '"]');
+      if (el) el.checked = true;
+    });
+  } catch (err) {}
+});
+</script>
+</body>
+</html>

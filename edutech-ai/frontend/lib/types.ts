@@ -116,6 +116,8 @@ export interface ExamQuestion {
   number: number;
   /** Đề câu hỏi — dạng đọc hiểu và sắp xếp câu mới có; dạng điền từ thì rỗng. */
   prompt?: string;
+  /** Điểm ngữ pháp/từ vựng được kiểm tra, hiện dưới dạng nhãn cạnh số câu. */
+  tested_point?: string;
   options: string[];
   correct_index: number;
   explanation?: string;
@@ -202,6 +204,7 @@ function normalizeExamSection(raw: any, fallbackIndex: number): ExamSection {
         Number(q?.exam_number ?? q?.number ?? q?.no ?? startNumber + i) ||
         startNumber + i,
       prompt: str(q?.prompt ?? ""),
+      tested_point: str(q?.tested_point ?? ""),
       options,
       correct_index: correct,
       explanation: str(q?.explanation ?? ""),
