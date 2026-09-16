@@ -49,6 +49,8 @@ func Run(client *ollama.Client, model, jobType string, input json.RawMessage, pr
 		return runTemplateAnalyze(client, model, input)
 	case models.JobTypeTemplateGenerate:
 		return runTemplateGenerate(client, model, input, progress)
+	case models.JobTypeMindmap:
+		return runMindmap(client, model, input)
 	default:
 		return nil, fmt.Errorf("loại job không hỗ trợ: %s", jobType)
 	}

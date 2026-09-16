@@ -1,0 +1,838 @@
+"use client";
+
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { downloadFile } from "@/lib/download";
+import {
+  FONT_FAMILY,
+  MAX_DEPTH,
+  MAX_NODES,
+  type LayoutNode,
+  type MindNode,
+  type MindmapContent,
+  cloneTree,
+  computeLayout,
+  countNodes,
+  depthOf,
+  downloadBlob,
+  exportSvgString,
+  findWithParent,
+  mindmapToMarkdown,
+  newId,
+  slugify,
+  svgToPngBlob,
+} from "@/lib/mindmap";
+
+interface History {
+  past: MindNode[];
+  present: MindNode;
+  future: MindNode[];
+}
+
+interface Editing {
+  id: string;
+  value: string;
+  isNew: boolean;
+}
+
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 2.5;
+
+function ToolButton({
+  onClick,
+  disabled,
+  title,
+  children,
+  active,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title: string;
+  children: React.ReactNode;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+        active
+          ? "bg-indigo-600 text-white"
+          : "text-slate-700 hover:bg-slate-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const Sep = () => <span className="mx-1 h-5 w-px bg-slate-200" />;
+
+export default function MindMapEditor({
+  initialRoot,
+  meta,
+  title,
+  onSave,
+}: {
+  initialRoot: MindNode;
+  meta?: Partial<MindmapContent>;
+  title?: string;
+  /** Lưu cây đã sửa lên máy chủ. Không truyền = chỉ sửa tạm, không lưu. */
+  onSave?: (root: MindNode) => Promise<void>;
+}) {
+  const [hist, setHist] = useState<History>(() => ({
+    past: [],
+    present: cloneTree(initialRoot),
+    future: [],
+  }));
+  const tree = hist.present;
+  const [selectedId, setSelectedId] = useState<string | null>(initialRoot.id);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+  const [fullscreen, setFullscreen] = useState(false);
+  const [savedJson, setSavedJson] = useState(() => JSON.stringify(cloneTree(initialRoot)));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const dragRef = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
+  const activeRef = useRef(false);
+  // Chặn kết thúc sửa hai lần (Enter rồi blur khi ô nhập bị gỡ).
+  const editOpenRef = useRef(false);
+
+  const beginEdit = useCallback((e: Editing) => {
+    editOpenRef.current = true;
+    setEditing(e);
+  }, []);
+
+  const layout = useMemo(() => computeLayout(tree, collapsed), [tree, collapsed]);
+  const dirty = useMemo(() => JSON.stringify(tree) !== savedJson, [tree, savedJson]);
+  const total = useMemo(() => countNodes(tree), [tree]);
+
+  // ---------- Lịch sử ----------
+
+  const commit = useCallback((next: MindNode) => {
+    setHist((h) => ({ past: [...h.past.slice(-49), h.present], present: next, future: [] }));
+  }, []);
+  const undo = useCallback(() => {
+    editOpenRef.current = false;
+    setEditing(null);
+    setHist((h) =>
+      h.past.length === 0
+        ? h
+        : {
+            past: h.past.slice(0, -1),
+            present: h.past[h.past.length - 1],
+            future: [h.present, ...h.future],
+          }
+    );
+  }, []);
+  const redo = useCallback(() => {
+    editOpenRef.current = false;
+    setEditing(null);
+    setHist((h) =>
+      h.future.length === 0
+        ? h
+        : { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
+    );
+  }, []);
+
+  // ---------- Khung nhìn ----------
+
+  const fit = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const { minX, minY, maxX, maxY } = layout.bounds;
+    const pad = 40;
+    const bw = maxX - minX + pad * 2;
+    const bh = maxY - minY + pad * 2;
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    const scale = Math.max(MIN_SCALE, Math.min(1.1, cw / bw, ch / bh));
+    setView({
+      scale,
+      tx: cw / 2 - ((minX + maxX) / 2) * scale,
+      ty: ch / 2 - ((minY + maxY) / 2) * scale,
+    });
+  }, [layout]);
+
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  useLayoutEffect(() => {
+    fitRef.current();
+  }, [fullscreen]);
+
+  const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
+    const el = containerRef.current;
+    setView((v) => {
+      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+      const px = cx ?? (el ? el.clientWidth / 2 : 0);
+      const py = cy ?? (el ? el.clientHeight / 2 : 0);
+      const k = scale / v.scale;
+      return { scale, tx: px - (px - v.tx) * k, ty: py - (py - v.ty) * k };
+    });
+  }, []);
+
+  // Cuộn chuột: Ctrl/⌘ + cuộn để phóng to; cuộn thường chỉ di chuyển sơ đồ khi
+  // đang làm việc trong khung (đã bấm vào) hoặc toàn màn hình — không chặn cuộn trang.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const rect = el.getBoundingClientRect();
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        zoomAt(Math.exp(-e.deltaY * 0.0025), e.clientX - rect.left, e.clientY - rect.top);
+      } else if (activeRef.current || fullscreen) {
+        e.preventDefault();
+        setView((v) => ({ ...v, tx: v.tx - e.deltaX, ty: v.ty - e.deltaY }));
+      }
+    };
+    const onDocDown = (e: PointerEvent) => {
+      if (!el.contains(e.target as Node)) activeRef.current = false;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    document.addEventListener("pointerdown", onDocDown);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      document.removeEventListener("pointerdown", onDocDown);
+    };
+  }, [zoomAt, fullscreen]);
+
+  // Giữ nút đang chọn trong tầm nhìn (vd vừa thêm nút ở mép).
+  useEffect(() => {
+    const el = containerRef.current;
+    const n = selectedId ? layout.byId.get(selectedId) : undefined;
+    if (!el || !n) return;
+    const margin = 40;
+    setView((v) => {
+      const left = (n.x - n.w / 2) * v.scale + v.tx;
+      const right = (n.x + n.w / 2) * v.scale + v.tx;
+      const top = (n.y - n.h / 2) * v.scale + v.ty;
+      const bottom = (n.y + n.h / 2) * v.scale + v.ty;
+      let dx = 0;
+      let dy = 0;
+      if (left < margin) dx = margin - left;
+      else if (right > el.clientWidth - margin) dx = el.clientWidth - margin - right;
+      if (top < margin) dy = margin - top;
+      else if (bottom > el.clientHeight - margin) dy = el.clientHeight - margin - bottom;
+      return dx || dy ? { ...v, tx: v.tx + dx, ty: v.ty + dy } : v;
+    });
+  }, [selectedId, layout]);
+
+  useEffect(() => {
+    if (!dirty || !onSave) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty, onSave]);
+
+  // ---------- Thao tác nút ----------
+
+  function flash(kind: "ok" | "error", text: string) {
+    setMessage({ kind, text });
+    window.setTimeout(() => setMessage((m) => (m?.text === text ? null : m)), 3500);
+  }
+
+  function addChild(id: string) {
+    if (total >= MAX_NODES) return flash("error", `Sơ đồ tối đa ${MAX_NODES} nút.`);
+    if (depthOf(tree, id) >= MAX_DEPTH) return flash("error", `Sơ đồ tối đa ${MAX_DEPTH} tầng.`);
+    const next = cloneTree(tree);
+    const found = findWithParent(next, id);
+    if (!found) return;
+    const child: MindNode = { id: newId(), text: "", children: [] };
+    found.node.children = [...(found.node.children || []), child];
+    if (collapsed.has(id)) {
+      const c = new Set(collapsed);
+      c.delete(id);
+      setCollapsed(c);
+    }
+    commit(next);
+    setSelectedId(child.id);
+    beginEdit({ id: child.id, value: "", isNew: true });
+  }
+
+  function addSibling(id: string) {
+    const found = findWithParent(tree, id);
+    if (!found?.parent) return addChild(id);
+    if (total >= MAX_NODES) return flash("error", `Sơ đồ tối đa ${MAX_NODES} nút.`);
+    const next = cloneTree(tree);
+    const f = findWithParent(next, id)!;
+    const sib: MindNode = { id: newId(), text: "", children: [] };
+    const list = f.parent!.children || [];
+    const idx = list.findIndex((c) => c.id === id);
+    list.splice(idx + 1, 0, sib);
+    f.parent!.children = list;
+    commit(next);
+    setSelectedId(sib.id);
+    beginEdit({ id: sib.id, value: "", isNew: true });
+  }
+
+  function remove(id: string) {
+    const found = findWithParent(tree, id);
+    if (!found?.parent) return;
+    const next = cloneTree(tree);
+    const f = findWithParent(next, id)!;
+    const list = f.parent!.children || [];
+    const idx = list.findIndex((c) => c.id === id);
+    list.splice(idx, 1);
+    commit(next);
+    setSelectedId(list[Math.min(idx, list.length - 1)]?.id || f.parent!.id);
+  }
+
+  function move(id: string, dir: -1 | 1) {
+    const found = findWithParent(tree, id);
+    if (!found?.parent) return;
+    const idx = (found.parent.children || []).findIndex((c) => c.id === id);
+    const to = idx + dir;
+    if (to < 0 || to >= (found.parent.children || []).length) return;
+    const next = cloneTree(tree);
+    const list = findWithParent(next, id)!.parent!.children!;
+    [list[idx], list[to]] = [list[to], list[idx]];
+    commit(next);
+  }
+
+  function startEdit(id: string) {
+    const found = findWithParent(tree, id);
+    if (!found) return;
+    setSelectedId(id);
+    beginEdit({ id, value: found.node.text, isNew: false });
+  }
+
+  function finishEdit(mode: "commit" | "cancel") {
+    const ed = editing;
+    if (!ed || !editOpenRef.current) return;
+    editOpenRef.current = false;
+    setEditing(null);
+    const value = ed.value.replace(/\s+/g, " ").trim();
+    const found = findWithParent(tree, ed.id);
+    if (ed.isNew && (mode === "cancel" || !value)) {
+      // Bỏ nút vừa thêm mà chưa có chữ — gỡ luôn bước "thêm" khỏi lịch sử.
+      setHist((h) =>
+        h.past.length === 0
+          ? h
+          : { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: h.future }
+      );
+      setSelectedId(found?.parent?.id || tree.id);
+    } else if (mode === "commit" && value && found && value !== found.node.text) {
+      const next = cloneTree(tree);
+      findWithParent(next, ed.id)!.node.text = value;
+      if (ed.isNew) setHist((h) => ({ ...h, present: next }));
+      else commit(next);
+    }
+    // Trả focus cho khung vẽ ngay để phím tắt tiếp theo (Ctrl+Z, Tab…) ăn luôn.
+    containerRef.current?.focus({ preventScroll: true });
+  }
+
+  function toggleCollapse(id: string) {
+    const c = new Set(collapsed);
+    if (c.has(id)) c.delete(id);
+    else c.add(id);
+    setCollapsed(c);
+  }
+
+  function navigate(key: string) {
+    const cur = selectedId ? layout.byId.get(selectedId) : undefined;
+    if (!cur) return setSelectedId(tree.id);
+    if (key === "ArrowLeft" || key === "ArrowRight") {
+      const d = key === "ArrowRight" ? 1 : -1;
+      const kids = layout.nodes
+        .filter((n) => n.parentId === cur.id && (cur.depth > 0 || n.side === d))
+        .sort((a, b) => a.y - b.y);
+      if ((cur.depth === 0 || cur.side === d) && kids.length) {
+        setSelectedId(kids[Math.floor((kids.length - 1) / 2)].id);
+      } else if (cur.depth > 0 && cur.side === -d && cur.parentId) {
+        setSelectedId(cur.parentId);
+      }
+      return;
+    }
+    const sibs = layout.nodes
+      .filter((n) => n.parentId === cur.parentId && n.side === cur.side)
+      .sort((a, b) => a.y - b.y);
+    const i = sibs.findIndex((n) => n.id === cur.id);
+    const j = key === "ArrowUp" ? i - 1 : i + 1;
+    if (sibs[j]) setSelectedId(sibs[j].id);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (editing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      return e.shiftKey ? redo() : undo();
+    }
+    if (mod && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      return redo();
+    }
+    if (mod && e.key.toLowerCase() === "s" && onSave) {
+      e.preventDefault();
+      return void save();
+    }
+    if (e.key === "Escape" && fullscreen) {
+      e.preventDefault();
+      e.stopPropagation();
+      return setFullscreen(false);
+    }
+    if (e.key.startsWith("Arrow")) {
+      e.preventDefault();
+      if (e.altKey && selectedId && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        return move(selectedId, e.key === "ArrowUp" ? -1 : 1);
+      }
+      return navigate(e.key);
+    }
+    if (!selectedId) return;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      addChild(selectedId);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      addSibling(selectedId);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      remove(selectedId);
+    } else if (e.key === "F2" || e.key === " ") {
+      e.preventDefault();
+      startEdit(selectedId);
+    }
+  }
+
+  // ---------- Kéo nền ----------
+
+  function onPointerDown(e: React.PointerEvent) {
+    activeRef.current = true;
+    if ((e.target as Element).closest("[data-node]")) return;
+    if (editing) finishEdit("commit");
+    dragRef.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
+    setView((v) => ({ ...v, tx: d.tx + dx, ty: d.ty + dy }));
+  }
+  function onPointerUp() {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (d && !d.moved) setSelectedId(null);
+  }
+
+  // ---------- Lưu & xuất ----------
+
+  async function save() {
+    if (!onSave || saving) return;
+    if (editing) finishEdit("commit");
+    setSaving(true);
+    try {
+      await onSave(tree);
+      setSavedJson(JSON.stringify(tree));
+      flash("ok", "Đã lưu sơ đồ.");
+    } catch (err: any) {
+      flash("error", err?.message || "Lưu thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const fileBase = slugify(title || tree.text);
+
+  async function exportAs(kind: "png" | "svg" | "md") {
+    setExportOpen(false);
+    try {
+      if (kind === "md") {
+        downloadFile(`${fileBase}.md`, mindmapToMarkdown(tree, meta), "text/markdown;charset=utf-8");
+        return;
+      }
+      if (!svgRef.current) return;
+      const out = exportSvgString(svgRef.current, layout.bounds);
+      if (kind === "svg") {
+        downloadFile(`${fileBase}.svg`, out.svg, "image/svg+xml;charset=utf-8");
+      } else {
+        const blob = await svgToPngBlob(out.svg, out.width, out.height, 2);
+        downloadBlob(`${fileBase}.png`, blob);
+      }
+      if (collapsed.size > 0) flash("ok", "Lưu ý: nhánh đang thu gọn sẽ không có trong file.");
+    } catch (err: any) {
+      flash("error", err?.message || "Xuất file thất bại.");
+    }
+  }
+
+  // ---------- Vẽ ----------
+
+  const selected = selectedId ? layout.byId.get(selectedId) : undefined;
+  const editNode = editing ? layout.byId.get(editing.id) : undefined;
+
+  // useLayoutEffect: focus ngay khi ô nhập vừa gắn vào DOM, trước phím gõ tiếp
+  // theo — tránh chữ đầu tiên lọt xuống khung vẽ và bị hiểu thành phím tắt.
+  useLayoutEffect(() => {
+    if (editing && editRef.current) {
+      editRef.current.focus();
+      editRef.current.select();
+    }
+    // Chỉ khi bắt đầu sửa một nút mới, không phải mỗi lần gõ.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.id]);
+
+  function renderNode(n: LayoutNode) {
+    const left = n.x - n.w / 2;
+    const top = n.y - n.h / 2;
+    const st = n.style;
+    const isRoot = n.depth === 0;
+    const isSel = n.id === selectedId;
+    const rx = isRoot ? 18 : n.depth === 1 ? 12 : 9;
+    const textFill = isRoot ? "#ffffff" : "#0f172a";
+    const hasKids = (n.node.children || []).length > 0;
+    const toggleX = n.x + n.side * (n.w / 2 + 12);
+    return (
+      <g
+        key={n.id}
+        data-node={n.id}
+        className="group cursor-pointer"
+        onPointerDown={(e) => {
+          activeRef.current = true;
+          e.stopPropagation();
+          if (editing && editing.id !== n.id) finishEdit("commit");
+          setSelectedId(n.id);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          startEdit(n.id);
+        }}
+      >
+        {isSel && (
+          <rect
+            data-noexport=""
+            x={left - 5}
+            y={top - 5}
+            width={n.w + 10}
+            height={n.h + 10}
+            rx={rx + 5}
+            fill="none"
+            stroke="#2563eb"
+            strokeWidth={2.5}
+          />
+        )}
+        {isRoot ? (
+          <rect x={left} y={top} width={n.w} height={n.h} rx={rx} fill="#1e293b" />
+        ) : n.depth === 1 ? (
+          <>
+            <rect x={left} y={top} width={n.w} height={n.h} rx={rx} fill="#ffffff" />
+            <rect
+              x={left}
+              y={top}
+              width={n.w}
+              height={n.h}
+              rx={rx}
+              fill={n.color}
+              fillOpacity={0.14}
+              stroke={n.color}
+              strokeWidth={2}
+            />
+          </>
+        ) : (
+          <rect
+            x={left}
+            y={top}
+            width={n.w}
+            height={n.h}
+            rx={rx}
+            fill="#ffffff"
+            stroke={n.color}
+            strokeOpacity={0.5}
+            strokeWidth={1.25}
+          />
+        )}
+        <text
+          x={n.x}
+          textAnchor="middle"
+          fontSize={st.size}
+          fontWeight={st.weight}
+          fill={textFill}
+          fontFamily={FONT_FAMILY}
+        >
+          {n.lines.map((line, i) => (
+            <tspan key={i} x={n.x} y={top + st.padY + i * st.lineH + st.lineH * 0.74}>
+              {line || (editing?.id === n.id ? "" : "…")}
+            </tspan>
+          ))}
+        </text>
+        {n.node.tag && (
+          <text
+            x={n.x}
+            y={top + st.padY + n.lines.length * st.lineH + 12}
+            textAnchor="middle"
+            fontSize={11}
+            fontWeight={500}
+            fill={n.color}
+            fontFamily={FONT_FAMILY}
+          >
+            {n.node.tag}
+          </text>
+        )}
+        {!isRoot && hasKids && n.hiddenCount > 0 && (
+          <g
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              toggleCollapse(n.id);
+            }}
+          >
+            <circle cx={toggleX} cy={n.y} r={10} fill={n.color} />
+            <text
+              x={toggleX}
+              y={n.y + 3.5}
+              textAnchor="middle"
+              fontSize={10}
+              fontWeight={700}
+              fill="#ffffff"
+              fontFamily={FONT_FAMILY}
+            >
+              {n.hiddenCount > 99 ? "99+" : n.hiddenCount}
+            </text>
+          </g>
+        )}
+        {!isRoot && hasKids && n.hiddenCount === 0 && (
+          <g
+            data-noexport=""
+            className={isSel ? "" : "opacity-0 group-hover:opacity-100"}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              toggleCollapse(n.id);
+            }}
+          >
+            <circle cx={toggleX} cy={n.y} r={8} fill="#ffffff" stroke={n.color} strokeWidth={1.5} />
+            <path
+              d={`M ${toggleX - 4} ${n.y} H ${toggleX + 4}`}
+              stroke={n.color}
+              strokeWidth={1.75}
+              strokeLinecap="round"
+            />
+          </g>
+        )}
+      </g>
+    );
+  }
+
+  const canUndo = hist.past.length > 0;
+  const canRedo = hist.future.length > 0;
+
+  return (
+    <div
+      className={
+        fullscreen
+          ? "fixed inset-0 z-[60] flex flex-col bg-white"
+          : "flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white"
+      }
+    >
+      {/* Thanh công cụ */}
+      <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-slate-50/80 px-2 py-1.5">
+        <ToolButton title="Thêm nhánh con (Tab)" disabled={!selectedId} onClick={() => selectedId && addChild(selectedId)}>
+          ＋ Nhánh con
+        </ToolButton>
+        <ToolButton
+          title="Thêm nút cùng cấp (Enter)"
+          disabled={!selectedId}
+          onClick={() => selectedId && addSibling(selectedId)}
+        >
+          ＋ Cùng cấp
+        </ToolButton>
+        <ToolButton title="Sửa chữ (F2 hoặc bấm đúp)" disabled={!selectedId} onClick={() => selectedId && startEdit(selectedId)}>
+          ✎ Sửa
+        </ToolButton>
+        <ToolButton
+          title="Xoá nút và các nhánh con (Delete)"
+          disabled={!selectedId || selectedId === tree.id}
+          onClick={() => selectedId && remove(selectedId)}
+        >
+          🗑 Xoá
+        </ToolButton>
+        <ToolButton
+          title="Đưa lên (Alt + ↑)"
+          disabled={!selectedId || selectedId === tree.id}
+          onClick={() => selectedId && move(selectedId, -1)}
+        >
+          ↑
+        </ToolButton>
+        <ToolButton
+          title="Đưa xuống (Alt + ↓)"
+          disabled={!selectedId || selectedId === tree.id}
+          onClick={() => selectedId && move(selectedId, 1)}
+        >
+          ↓
+        </ToolButton>
+        <Sep />
+        <ToolButton title="Hoàn tác (Ctrl/⌘ + Z)" disabled={!canUndo} onClick={undo}>
+          ↶
+        </ToolButton>
+        <ToolButton title="Làm lại (Ctrl/⌘ + Shift + Z)" disabled={!canRedo} onClick={redo}>
+          ↷
+        </ToolButton>
+        <Sep />
+        <ToolButton title="Thu nhỏ" onClick={() => zoomAt(1 / 1.2)}>
+          −
+        </ToolButton>
+        <span className="w-11 text-center text-xs tabular-nums text-slate-500">
+          {Math.round(view.scale * 100)}%
+        </span>
+        <ToolButton title="Phóng to" onClick={() => zoomAt(1.2)}>
+          +
+        </ToolButton>
+        <ToolButton title="Vừa khung" onClick={fit}>
+          ⤢ Vừa khung
+        </ToolButton>
+        {collapsed.size > 0 && (
+          <ToolButton title="Mở rộng tất cả nhánh" onClick={() => setCollapsed(new Set())}>
+            Mở hết
+          </ToolButton>
+        )}
+        <ToolButton
+          title={fullscreen ? "Thoát toàn màn hình (Esc)" : "Toàn màn hình"}
+          active={fullscreen}
+          onClick={() => setFullscreen((f) => !f)}
+        >
+          {fullscreen ? "✕ Thoát" : "⛶ Toàn màn hình"}
+        </ToolButton>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <button
+              type="button"
+              className="btn-secondary !px-3 !py-1.5 text-xs"
+              onClick={() => setExportOpen((o) => !o)}
+            >
+              ⬇ Tải về
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 z-10 mt-1 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
+                <button type="button" className="block w-full px-3 py-2 text-left hover:bg-slate-50" onClick={() => exportAs("png")}>
+                  Ảnh PNG (in, chiếu)
+                </button>
+                <button type="button" className="block w-full px-3 py-2 text-left hover:bg-slate-50" onClick={() => exportAs("svg")}>
+                  Ảnh SVG (phóng không vỡ)
+                </button>
+                <button type="button" className="block w-full px-3 py-2 text-left hover:bg-slate-50" onClick={() => exportAs("md")}>
+                  Dàn ý Markdown
+                </button>
+              </div>
+            )}
+          </div>
+          {onSave && (
+            <button
+              type="button"
+              className="btn-primary !px-3 !py-1.5 text-xs"
+              disabled={!dirty || saving}
+              onClick={save}
+              title="Lưu (Ctrl/⌘ + S)"
+            >
+              {saving ? "Đang lưu…" : dirty ? "💾 Lưu" : "✓ Đã lưu"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Vùng vẽ */}
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        className={`relative select-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-200 ${
+          fullscreen ? "flex-1" : "h-[560px]"
+        }`}
+        style={{
+          backgroundColor: "#f8fafc",
+          backgroundImage: "radial-gradient(#e2e8f0 1px, transparent 1px)",
+          backgroundSize: `${20 * view.scale}px ${20 * view.scale}px`,
+          backgroundPosition: `${view.tx}px ${view.ty}px`,
+          touchAction: "none",
+        }}
+      >
+        <svg
+          ref={svgRef}
+          className="absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
+          fontFamily={FONT_FAMILY}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        >
+          <g data-viewport="" transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
+            {layout.edges.map((e) => (
+              <path
+                key={`${e.from}-${e.to}`}
+                d={e.d}
+                fill="none"
+                stroke={e.color}
+                strokeWidth={e.width}
+                strokeLinecap="round"
+                strokeOpacity={0.85}
+              />
+            ))}
+            {layout.nodes.map(renderNode)}
+          </g>
+        </svg>
+
+        {editing && editNode && (
+          <textarea
+            ref={editRef}
+            value={editing.value}
+            rows={1}
+            onChange={(e) => setEditing({ ...editing, value: e.target.value })}
+            onBlur={() => finishEdit("commit")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                finishEdit("commit");
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                finishEdit("cancel");
+              }
+            }}
+            placeholder="Nhập nội dung…"
+            className="absolute z-10 resize-none rounded-lg border-2 border-blue-500 bg-white px-2 py-1 text-center text-slate-900 shadow-lg outline-none"
+            style={{
+              left: (editNode.x - Math.max(editNode.w, 180) / 2) * view.scale + view.tx,
+              top: (editNode.y - editNode.h / 2) * view.scale + view.ty,
+              width: Math.max(editNode.w, 180) * view.scale,
+              minHeight: editNode.h * view.scale,
+              fontSize: Math.max(12, editNode.style.size * view.scale),
+              fontWeight: editNode.style.weight,
+              lineHeight: 1.3,
+            }}
+          />
+        )}
+
+        {message && (
+          <div
+            className={`pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-medium shadow ${
+              message.kind === "ok" ? "bg-slate-800 text-white" : "bg-rose-600 text-white"
+            }`}
+          >
+            {message.text}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 px-3 py-2 text-[11px] text-slate-500">
+        <span>
+          <b>Tab</b> nhánh con · <b>Enter</b> cùng cấp · <b>bấm đúp</b>/<b>F2</b> sửa · <b>Del</b> xoá ·{" "}
+          <b>↑↓←→</b> di chuyển · <b>Ctrl/⌘+Z</b> hoàn tác · kéo nền để dời · <b>Ctrl/⌘+cuộn</b> phóng to
+        </span>
+        <span className="tabular-nums">
+          {total} nút{selected ? ` · đang chọn: ${selected.node.text || "(trống)"}` : ""}
+        </span>
+      </div>
+    </div>
+  );
+}

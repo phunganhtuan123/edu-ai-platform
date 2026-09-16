@@ -31,7 +31,7 @@ export interface Catalog {
 
 export interface Job {
   id: number | string;
-  type: "quiz" | "exam" | "writing" | "activity";
+  type: string;
   status: "queued" | "running" | "done" | "failed";
   error?: string;
   created_at?: string;
@@ -383,6 +383,9 @@ export const JOB_TYPE_LABELS: Record<string, string> = {
   exam: "Đề thi",
   writing: "Chấm bài viết",
   activity: "Hoạt động tương tác",
+  template_analyze: "Phân tích mẫu",
+  template_generate: "Nhân đề theo mẫu",
+  mindmap: "Sơ đồ tư duy",
 };
 
 export const BLOOM_LABELS: Record<string, string> = {

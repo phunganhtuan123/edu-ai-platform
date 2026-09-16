@@ -42,6 +42,7 @@ func main() {
 		api.POST("/auth/login", h.Login)
 		api.GET("/meta/catalog", h.Catalog)
 		api.GET("/meta/exam-parts", h.ExamParts)
+		api.GET("/meta/mindmap", h.MindmapMeta)
 
 		// Callback của Google là ĐƯỜNG CÔNG KHAI: trình duyệt quay về đây
 		// không mang JWT, danh tính nằm trong `state` đã ký HMAC.
@@ -65,6 +66,7 @@ func main() {
 			authed.GET("/google/auth-url", h.GoogleAuthURL)
 			authed.DELETE("/google/account", h.GoogleDisconnect)
 			authed.POST("/artifacts/:id/export/google-forms", h.ExportGoogleForms)
+			authed.PUT("/artifacts/:id/mindmap", h.SaveMindmap)
 
 			admin := authed.Group("/admin")
 			admin.Use(auth.AdminOnly())

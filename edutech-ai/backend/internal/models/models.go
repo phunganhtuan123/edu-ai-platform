@@ -38,6 +38,8 @@ const (
 	// Module 5 chạy hai bước: phân tích cấu trúc mẫu, rồi sinh nội dung mới.
 	JobTypeTemplateAnalyze  = "template_analyze"
 	JobTypeTemplateGenerate = "template_generate"
+	// Module 6 — sơ đồ tư duy cho cấp mầm non.
+	JobTypeMindmap = "mindmap"
 )
 
 type User struct {

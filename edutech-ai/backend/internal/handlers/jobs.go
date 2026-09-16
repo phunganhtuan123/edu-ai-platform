@@ -21,6 +21,7 @@ var validJobTypes = map[string]bool{
 	models.JobTypeActivity:         true,
 	models.JobTypeTemplateAnalyze:  true,
 	models.JobTypeTemplateGenerate: true,
+	models.JobTypeMindmap:          true,
 }
 
 type createJobRequest struct {

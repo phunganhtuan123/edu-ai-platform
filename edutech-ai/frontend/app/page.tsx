@@ -63,6 +63,15 @@ function CatalogSelect({
   );
 }
 
+// Mầm non không chia môn: cấp Mầm non chỉ đi với "Giáo dục mầm non" và ngược
+// lại. Backend cũng chặn cặp sai (SubjectGradeCompatible).
+const GRADE_MAMNON = "mamnon";
+const SUBJECT_MAMNON = "mamnon_chung";
+
+function compatible(subject: string, grade: string): boolean {
+  return (subject === SUBJECT_MAMNON) === (grade === GRADE_MAMNON);
+}
+
 function Dashboard() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -85,13 +94,27 @@ function Dashboard() {
       .then(([ps, cat]) => {
         setProjects(ps);
         setCatalog(cat);
-        const firstSubject = cat.subjects.find((s) => s.enabled);
-        const firstGrade = cat.grade_levels.find((g) => g.enabled);
-        if (firstSubject) setSubject(firstSubject.code);
-        if (firstGrade) setGrade(firstGrade.code);
+        const firstGrade = cat.grade_levels.find(
+          (g) => g.enabled && g.code !== GRADE_MAMNON
+        ) || cat.grade_levels.find((g) => g.enabled);
+        if (firstGrade) {
+          setGrade(firstGrade.code);
+          const firstSubject = cat.subjects.find(
+            (s) => s.enabled && compatible(s.code, firstGrade.code)
+          );
+          if (firstSubject) setSubject(firstSubject.code);
+        }
       })
       .catch((e: any) => setLoadError(e?.message || "Không tải được dữ liệu."));
   }, []);
+
+  function chooseGrade(g: string) {
+    setGrade(g);
+    if (catalog && !compatible(subject, g)) {
+      const s = catalog.subjects.find((x) => x.enabled && compatible(x.code, g));
+      setSubject(s ? s.code : "");
+    }
+  }
 
   async function createProject(e: React.FormEvent) {
     e.preventDefault();
@@ -217,16 +240,16 @@ function Dashboard() {
           {catalog ? (
             <>
               <CatalogSelect
-                label="Môn học"
-                entries={catalog.subjects}
-                value={subject}
-                onChange={setSubject}
-              />
-              <CatalogSelect
                 label="Cấp học"
                 entries={catalog.grade_levels}
                 value={grade}
-                onChange={setGrade}
+                onChange={chooseGrade}
+              />
+              <CatalogSelect
+                label={grade === GRADE_MAMNON ? "Chương trình" : "Môn học"}
+                entries={catalog.subjects.filter((s) => compatible(s.code, grade))}
+                value={subject}
+                onChange={setSubject}
               />
             </>
           ) : (

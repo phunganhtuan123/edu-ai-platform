@@ -8,12 +8,15 @@ export default function Modal({
   title,
   children,
   wide,
+  xwide,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: React.ReactNode;
   wide?: boolean;
+  /** Rộng gần hết màn hình — dùng cho sơ đồ tư duy. */
+  xwide?: boolean;
 }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -34,7 +37,7 @@ export default function Modal({
     >
       <div
         className={`max-h-[90vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-xl ${
-          wide ? "max-w-2xl" : "max-w-md"
+          xwide ? "max-w-6xl" : wide ? "max-w-2xl" : "max-w-md"
         }`}
         onClick={(e) => e.stopPropagation()}
       >

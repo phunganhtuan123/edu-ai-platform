@@ -16,9 +16,11 @@ type CatalogEntry struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// Subjects available in the MVP: only English is enabled.
+// Subjects available in the MVP: English (THCS/THPT) and the general preschool
+// program (Mầm non không chia môn — dạy theo lĩnh vực phát triển).
 var Subjects = []CatalogEntry{
 	{Key: "english", Name: "Tiếng Anh", Enabled: true},
+	{Key: SubjectMamNon, Name: "Giáo dục mầm non", Enabled: true},
 	{Key: "math", Name: "Toán", Enabled: false},
 	{Key: "science", Name: "Khoa học tự nhiên", Enabled: false},
 	{Key: "literature", Name: "Ngữ văn", Enabled: false},
@@ -26,10 +28,22 @@ var Subjects = []CatalogEntry{
 
 // GradeLevels available in the MVP: THCS and THPT enabled.
 var GradeLevels = []CatalogEntry{
-	{Key: "mamnon", Name: "Mầm non", Enabled: false},
+	{Key: GradeMamNon, Name: "Mầm non", Enabled: true},
 	{Key: "tieuhoc", Name: "Tiểu học", Enabled: false},
 	{Key: "thcs", Name: "THCS", Enabled: true},
 	{Key: "thpt", Name: "THPT", Enabled: true},
+}
+
+// Mầm non không có môn học: project mầm non luôn đi với "Giáo dục mầm non" và
+// ngược lại. Kiểm ở API (CreateProject), frontend chỉ tự chọn giúp.
+const (
+	GradeMamNon   = "mamnon"
+	SubjectMamNon = "mamnon_chung"
+)
+
+// SubjectGradeCompatible reports whether the subject/grade pair makes sense.
+func SubjectGradeCompatible(subject, grade string) bool {
+	return (subject == SubjectMamNon) == (grade == GradeMamNon)
 }
 
 // Catalog serves GET /api/meta/catalog.
@@ -79,5 +93,20 @@ func (h *Handler) ExamParts(c *gin.Context) {
 			"max_chars": h.Cfg.MaxSourceChars,
 		},
 		"difficulty_notice": "Mức độ khó do AI diễn giải nên có thể lệch — giáo viên vui lòng duyệt lại.",
+	})
+}
+
+// MindmapMeta serves GET /api/meta/mindmap — loại sơ đồ, nhóm tuổi và lĩnh vực
+// phát triển (spec mục 2e). Frontend render từ đây, không hardcode.
+func (h *Handler) MindmapMeta(c *gin.Context) {
+	domains := map[string][]pipelines.MetaOption{}
+	for _, a := range pipelines.AgeGroups {
+		domains[a.Key] = pipelines.DomainsFor(a.Key)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"map_types":  pipelines.MindmapTypes,
+		"age_groups": pipelines.AgeGroups,
+		"domains":    domains,
+		"notice":     "Sơ đồ do AI gợi ý — giáo viên điều chỉnh cho phù hợp lớp mình trước khi dùng.",
 	})
 }

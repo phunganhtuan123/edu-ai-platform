@@ -20,10 +20,13 @@ import ExamTab from "@/components/tabs/ExamTab";
 import WritingTab from "@/components/tabs/WritingTab";
 import ActivityTab from "@/components/tabs/ActivityTab";
 import TemplateTab from "@/components/tabs/TemplateTab";
+import MindmapTab from "@/components/tabs/MindmapTab";
 
 const MODEL_KEY = "edutech_model";
 
-const TABS = [
+// Bộ tab theo cấp học: THCS/THPT dùng 5 module tiếng Anh, Mầm non dùng module
+// sơ đồ tư duy (mầm non không chia môn, không làm đề).
+const ENGLISH_TABS = [
   { key: "quiz", label: "Trắc nghiệm", icon: "📝" },
   { key: "exam", label: "Đề thi", icon: "📄" },
   { key: "writing", label: "Chấm bài viết", icon: "✍️" },
@@ -31,7 +34,11 @@ const TABS = [
   { key: "activity", label: "Hoạt động tương tác", icon: "🎮" },
 ] as const;
 
-type TabKey = (typeof TABS)[number]["key"];
+const MAMNON_TABS = [{ key: "mindmap", label: "Sơ đồ tư duy", icon: "🧠" }] as const;
+
+type TabKey =
+  | (typeof ENGLISH_TABS)[number]["key"]
+  | (typeof MAMNON_TABS)[number]["key"];
 
 const GRADE_LABELS: Record<string, string> = {
   thcs: "THCS",
@@ -42,6 +49,7 @@ const GRADE_LABELS: Record<string, string> = {
 
 const SUBJECT_LABELS: Record<string, string> = {
   english: "Tiếng Anh",
+  mamnon_chung: "Giáo dục mầm non",
 };
 
 const ARTIFACT_ICONS: Record<string, string> = {
@@ -49,6 +57,8 @@ const ARTIFACT_ICONS: Record<string, string> = {
   exam: "📄",
   writing: "✍️",
   activity: "🎮",
+  template_generate: "♻️",
+  mindmap: "🧠",
 };
 
 function ProjectDetail() {
@@ -78,7 +88,11 @@ function ProjectDetail() {
 
   useEffect(() => {
     apiGet<any>(`/projects/${projectId}`)
-      .then((d) => setProject((d?.project || d) as Project))
+      .then((d) => {
+        const p = (d?.project || d) as Project;
+        setProject(p);
+        if (p?.grade_level === "mamnon") setTab("mindmap");
+      })
       .catch((e: any) =>
         setLoadError(e?.message || "Không tải được project.")
       );
@@ -140,6 +154,7 @@ function ProjectDetail() {
   }
 
   const gradeLevel = project.grade_level;
+  const tabs = gradeLevel === "mamnon" ? MAMNON_TABS : ENGLISH_TABS;
 
   return (
     <div>
@@ -189,7 +204,7 @@ function ProjectDetail() {
 
       {/* Tabs */}
       <div className="mb-6 flex flex-wrap gap-2">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -234,6 +249,14 @@ function ProjectDetail() {
           )}
           {tab === "template" && (
             <TemplateTab
+              projectId={projectId}
+              model={model}
+              gradeLevel={gradeLevel}
+              onArtifactCreated={onArtifactCreated}
+            />
+          )}
+          {tab === "mindmap" && (
+            <MindmapTab
               projectId={projectId}
               model={model}
               gradeLevel={gradeLevel}
@@ -311,8 +334,11 @@ function ProjectDetail() {
             : ""
         }
         wide
+        xwide={(viewArtifact?.type || "").toLowerCase() === "mindmap"}
       >
-        {viewArtifact && <ArtifactView artifact={viewArtifact} />}
+        {viewArtifact && (
+          <ArtifactView artifact={viewArtifact} onChanged={refreshArtifacts} />
+        )}
       </Modal>
     </div>
   );

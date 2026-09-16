@@ -67,6 +67,10 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cấp học chưa được hỗ trợ trong bản MVP", "field": "grade_level"})
 		return
 	}
+	if !SubjectGradeCompatible(req.Subject, req.GradeLevel) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cấp Mầm non đi với \"Giáo dục mầm non\"; môn học khác dành cho THCS/THPT", "field": "subject"})
+		return
+	}
 
 	me := auth.CurrentUser(c)
 	project := models.Project{

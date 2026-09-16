@@ -11,9 +11,17 @@ import QuizResult from "./results/QuizResult";
 import ExamResult from "./results/ExamResult";
 import WritingResult from "./results/WritingResult";
 import ActivityResult from "./results/ActivityResult";
+import MindmapResult from "./results/MindmapResult";
 
 /** Renders a saved artifact by type (used by the history panel). */
-export default function ArtifactView({ artifact }: { artifact: Artifact }) {
+export default function ArtifactView({
+  artifact,
+  onChanged,
+}: {
+  artifact: Artifact;
+  /** Gọi khi người dùng lưu thay đổi vào artifact (vd sửa sơ đồ). */
+  onChanged?: () => void;
+}) {
   const type = (artifact.type || "").toLowerCase();
   switch (type) {
     case "quiz":
@@ -48,6 +56,15 @@ export default function ArtifactView({ artifact }: { artifact: Artifact }) {
         <ActivityResult
           html={activityHtml(artifact.content)}
           title={artifact.title || "Hoạt động tương tác"}
+        />
+      );
+    case "mindmap":
+      return (
+        <MindmapResult
+          content={artifact.content}
+          title={artifact.title}
+          artifactId={artifact.id}
+          onSaved={onChanged}
         />
       );
     default:
