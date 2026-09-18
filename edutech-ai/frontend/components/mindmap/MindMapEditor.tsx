@@ -6,21 +6,29 @@ import {
   FONT_FAMILY,
   MAX_DEPTH,
   MAX_NODES,
+  MAX_TAG_LEN,
+  MAX_TEXT_LEN,
+  clampText,
   type LayoutNode,
   type MindNode,
   type MindmapContent,
   cloneTree,
+  collectTags,
   computeLayout,
   countNodes,
   depthOf,
   downloadBlob,
   exportSvgString,
   findWithParent,
+  indentBranch,
   mindmapToMarkdown,
   newId,
+  outdentBranch,
+  pathTo,
   slugify,
   svgToPngBlob,
 } from "@/lib/mindmap";
+import MindmapSidePanel, { type NodeActions, type PanelTab } from "./MindmapSidePanel";
 
 interface History {
   past: MindNode[];
@@ -97,6 +105,10 @@ export default function MindMapEditor({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelTab, setPanelTab] = useState<PanelTab>("outline");
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -114,6 +126,7 @@ export default function MindMapEditor({
   const layout = useMemo(() => computeLayout(tree, collapsed), [tree, collapsed]);
   const dirty = useMemo(() => JSON.stringify(tree) !== savedJson, [tree, savedJson]);
   const total = useMemo(() => countNodes(tree), [tree]);
+  const tags = useMemo(() => collectTags(tree), [tree]);
 
   // ---------- Lịch sử ----------
 
@@ -166,7 +179,7 @@ export default function MindMapEditor({
   fitRef.current = fit;
   useLayoutEffect(() => {
     fitRef.current();
-  }, [fullscreen]);
+  }, [fullscreen, panelOpen]);
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const el = containerRef.current;
@@ -301,6 +314,57 @@ export default function MindMapEditor({
     commit(next);
   }
 
+  function indent(id: string) {
+    const next = indentBranch(tree, id);
+    if (!next) {
+      const f = findWithParent(tree, id);
+      const first = f?.parent && (f.parent.children || [])[0]?.id === id;
+      return flash("error", first ? "Nút đầu nhánh không có nút phía trên để hạ cấp vào." : `Không hạ cấp được — sơ đồ tối đa ${MAX_DEPTH} tầng.`);
+    }
+    commit(next);
+  }
+
+  function outdent(id: string) {
+    const next = outdentBranch(tree, id);
+    if (!next) return flash("error", "Nhánh cấp 1 không nâng cấp được nữa.");
+    commit(next);
+  }
+
+  function rename(id: string, text: string) {
+    const next = cloneTree(tree);
+    const f = findWithParent(next, id);
+    const value = clampText(text, MAX_TEXT_LEN);
+    if (!f || !value) return;
+    f.node.text = value;
+    commit(next);
+  }
+
+  function retag(id: string, tag: string) {
+    const next = cloneTree(tree);
+    const f = findWithParent(next, id);
+    if (!f) return;
+    f.node.tag = clampText(tag, MAX_TAG_LEN) || undefined;
+    commit(next);
+  }
+
+  /** Chọn nút từ dàn ý/tìm kiếm: mở các nhánh cha đang thu gọn để nút hiện trên sơ đồ. */
+  function selectNode(id: string) {
+    const ancestors = pathTo(tree, id).slice(0, -1);
+    if (ancestors.some((a) => collapsed.has(a.id))) {
+      const c = new Set(collapsed);
+      ancestors.forEach((a) => c.delete(a.id));
+      setCollapsed(c);
+    }
+    if (editing) finishEdit("commit");
+    setSelectedId(id);
+  }
+
+  function openSearch() {
+    setPanelOpen(true);
+    setPanelTab("outline");
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  }
+
   function startEdit(id: string) {
     const found = findWithParent(tree, id);
     if (!found) return;
@@ -313,7 +377,7 @@ export default function MindMapEditor({
     if (!ed || !editOpenRef.current) return;
     editOpenRef.current = false;
     setEditing(null);
-    const value = ed.value.replace(/\s+/g, " ").trim();
+    const value = clampText(ed.value, MAX_TEXT_LEN);
     const found = findWithParent(tree, ed.id);
     if (ed.isNew && (mode === "cancel" || !value)) {
       // Bỏ nút vừa thêm mà chưa có chữ — gỡ luôn bước "thêm" khỏi lịch sử.
@@ -378,6 +442,10 @@ export default function MindMapEditor({
       e.preventDefault();
       return void save();
     }
+    if (mod && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      return openSearch();
+    }
     if (e.key === "Escape" && fullscreen) {
       e.preventDefault();
       e.stopPropagation();
@@ -387,6 +455,9 @@ export default function MindMapEditor({
       e.preventDefault();
       if (e.altKey && selectedId && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
         return move(selectedId, e.key === "ArrowUp" ? -1 : 1);
+      }
+      if (e.altKey && selectedId && selectedId !== tree.id) {
+        return e.key === "ArrowRight" ? indent(selectedId) : outdent(selectedId);
       }
       return navigate(e.key);
     }
@@ -624,6 +695,34 @@ export default function MindMapEditor({
     );
   }
 
+  // Dữ liệu cho bảng Thuộc tính: vị trí nút trong nhóm anh em quyết định nút nào bấm được.
+  const selFound = selectedId ? findWithParent(tree, selectedId) : null;
+  const selSiblings = selFound?.parent?.children || [];
+  const selIdx = selFound?.parent ? selSiblings.findIndex((c) => c.id === selectedId) : -1;
+  const selectedInfo = selFound
+    ? {
+        node: selFound.node,
+        depth: depthOf(tree, selFound.node.id),
+        parentText: selFound.parent ? selFound.parent.text || "(trống)" : null,
+      }
+    : null;
+  const nodeActions: NodeActions | null =
+    selFound && selectedId
+      ? {
+          canMoveUp: selIdx > 0,
+          canMoveDown: selIdx >= 0 && selIdx < selSiblings.length - 1,
+          canIndent: selIdx > 0,
+          canOutdent: !!selFound.parent && selFound.parent.id !== tree.id,
+          moveUp: () => move(selectedId, -1),
+          moveDown: () => move(selectedId, 1),
+          indent: () => indent(selectedId),
+          outdent: () => outdent(selectedId),
+          addChild: () => addChild(selectedId),
+          addSibling: () => addSibling(selectedId),
+          remove: () => remove(selectedId),
+        }
+      : null;
+
   const canUndo = hist.past.length > 0;
   const canRedo = hist.future.length > 0;
 
@@ -697,6 +796,13 @@ export default function MindMapEditor({
           </ToolButton>
         )}
         <ToolButton
+          title={panelOpen ? "Ẩn dàn ý & thuộc tính" : "Hiện dàn ý & thuộc tính (Ctrl/⌘ + F để tìm)"}
+          active={panelOpen}
+          onClick={() => setPanelOpen((o) => !o)}
+        >
+          ☰ Dàn ý
+        </ToolButton>
+        <ToolButton
           title={fullscreen ? "Thoát toàn màn hình (Esc)" : "Toàn màn hình"}
           active={fullscreen}
           onClick={() => setFullscreen((f) => !f)}
@@ -741,13 +847,16 @@ export default function MindMapEditor({
         </div>
       </div>
 
-      {/* Vùng vẽ */}
+      <div className={`flex min-h-0 flex-col lg:flex-row ${fullscreen ? "flex-1" : ""}`}>
+      {/* Vùng vẽ. Không dùng flex-1 khi xếp cột mà khung ngoài không có chiều cao
+          cố định — vùng vẽ chỉ chứa phần tử absolute nên sẽ sập về 0. */}
       <div
         ref={containerRef}
         tabIndex={0}
         onKeyDown={onKeyDown}
-        className={`relative select-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-200 ${
-          fullscreen ? "flex-1" : "h-[560px]"
+        aria-label="Vùng vẽ sơ đồ tư duy — dùng phím mũi tên để chọn nút"
+        className={`relative min-w-0 select-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-200 ${
+          fullscreen ? "min-h-[240px] flex-1" : "h-[420px] sm:h-[560px] lg:flex-1"
         }`}
         style={{
           backgroundColor: "#f8fafc",
@@ -787,6 +896,7 @@ export default function MindMapEditor({
             ref={editRef}
             value={editing.value}
             rows={1}
+            maxLength={MAX_TEXT_LEN}
             onChange={(e) => setEditing({ ...editing, value: e.target.value })}
             onBlur={() => finishEdit("commit")}
             onKeyDown={(e) => {
@@ -824,11 +934,40 @@ export default function MindMapEditor({
         )}
       </div>
 
+      {panelOpen && (
+        <aside
+          className={`shrink-0 border-t border-slate-200 bg-white lg:w-72 lg:border-l lg:border-t-0 ${
+            fullscreen ? "h-72 lg:h-auto" : "h-80 lg:h-[560px]"
+          }`}
+        >
+          <MindmapSidePanel
+            ref={searchRef}
+            tab={panelTab}
+            onTab={setPanelTab}
+            root={tree}
+            selectedId={selectedId}
+            collapsed={collapsed}
+            onSelect={selectNode}
+            onToggle={toggleCollapse}
+            selected={selectedInfo}
+            tags={tags}
+            onRename={rename}
+            onRetag={retag}
+            actions={nodeActions}
+            query={query}
+            onQuery={setQuery}
+          />
+        </aside>
+      )}
+      </div>
+
       <div className="flex flex-wrap justify-between gap-2 border-t border-slate-200 px-3 py-2 text-[11px] text-slate-500">
-        <span>
+        <span className="hidden sm:inline">
           <b>Tab</b> nhánh con · <b>Enter</b> cùng cấp · <b>bấm đúp</b>/<b>F2</b> sửa · <b>Del</b> xoá ·{" "}
-          <b>↑↓←→</b> di chuyển · <b>Ctrl/⌘+Z</b> hoàn tác · kéo nền để dời · <b>Ctrl/⌘+cuộn</b> phóng to
+          <b>↑↓←→</b> chọn nút · <b>Alt+↑↓</b> đổi thứ tự · <b>Alt+←→</b> nâng/hạ cấp · <b>Ctrl/⌘+F</b> tìm ·{" "}
+          <b>Ctrl/⌘+Z</b> hoàn tác · kéo nền để dời · <b>Ctrl/⌘+cuộn</b> phóng to
         </span>
+        <span className="sm:hidden">Chạm nút để chọn · kéo nền để dời · sửa trong mục Thuộc tính</span>
         <span className="tabular-nums">
           {total} nút{selected ? ` · đang chọn: ${selected.node.text || "(trống)"}` : ""}
         </span>

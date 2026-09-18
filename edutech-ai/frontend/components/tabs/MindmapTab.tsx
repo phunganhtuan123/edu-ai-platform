@@ -96,8 +96,8 @@ export default function MindmapTab({
         <h3 className="font-semibold text-slate-900">Sơ đồ tư duy chủ đề</h3>
         <p className="mt-1 text-sm text-slate-500">
           Nhập chủ đề, AI vẽ sẵn mạng nội dung hoặc mạng hoạt động. Sau đó thầy cô
-          sửa trực tiếp trên sơ đồ như XMind — thêm, xoá, đổi chữ, kéo thả khung
-          nhìn — rồi tải ảnh về in hoặc chiếu.
+          sửa trực tiếp trên sơ đồ như XMind — thêm, xoá, đổi chữ, tìm nút trong dàn
+          ý, sắp xếp và nâng/hạ cấp nhánh, gắn nhãn — rồi tải ảnh về in hoặc chiếu.
         </p>
       </div>
 

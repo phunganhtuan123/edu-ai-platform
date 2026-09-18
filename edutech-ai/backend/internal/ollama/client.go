@@ -72,7 +72,24 @@ type chatResponse struct {
 	Message struct {
 		Content string `json:"content"`
 	} `json:"message"`
-	Error string `json:"error"`
+	Error           string `json:"error"`
+	PromptEvalCount *int64 `json:"prompt_eval_count"`
+	EvalCount       *int64 `json:"eval_count"`
+}
+
+// Usage contains Ollama's measured token counts for one completed chat call.
+type Usage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	Recorded         bool  `json:"recorded"`
+}
+
+// ChatResult keeps the structured content and the usage reported for the
+// same HTTP response together, so callers cannot accidentally mix jobs.
+type ChatResult struct {
+	Content string
+	Usage   Usage
 }
 
 // ChatStructured calls POST /api/chat with structured output enforced by the
@@ -80,6 +97,13 @@ type chatResponse struct {
 // Ollama when a schema is supplied). Mirrors edu-cli: temperature 0.4,
 // num_ctx 8192, stream=false, long timeout.
 func (c *Client) ChatStructured(model, system, user string, schema map[string]any) (string, error) {
+	result, err := c.ChatStructuredWithUsage(model, system, user, schema)
+	return result.Content, err
+}
+
+// ChatStructuredWithUsage is ChatStructured plus the actual
+// prompt_eval_count/eval_count returned by Ollama.
+func (c *Client) ChatStructuredWithUsage(model, system, user string, schema map[string]any) (ChatResult, error) {
 	reqBody := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
@@ -95,26 +119,35 @@ func (c *Client) ChatStructured(model, system, user string, schema map[string]an
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 	resp, err := c.http.Post(c.baseURL+"/api/chat", "application/json", bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("không gọi được Ollama (%s): %w", c.baseURL, err)
+		return ChatResult{}, fmt.Errorf("không gọi được Ollama (%s): %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("không đọc được phản hồi Ollama: %w", err)
+		return ChatResult{}, fmt.Errorf("không đọc được phản hồi Ollama: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ollama /api/chat trả về %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return ChatResult{}, fmt.Errorf("ollama /api/chat trả về %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var chat chatResponse
 	if err := json.Unmarshal(body, &chat); err != nil {
-		return "", fmt.Errorf("phản hồi Ollama không phải JSON: %w", err)
+		return ChatResult{}, fmt.Errorf("phản hồi Ollama không phải JSON: %w", err)
 	}
+	result := ChatResult{Content: chat.Message.Content}
+	if chat.PromptEvalCount != nil {
+		result.Usage.PromptTokens = *chat.PromptEvalCount
+	}
+	if chat.EvalCount != nil {
+		result.Usage.CompletionTokens = *chat.EvalCount
+	}
+	result.Usage.TotalTokens = result.Usage.PromptTokens + result.Usage.CompletionTokens
+	result.Usage.Recorded = chat.PromptEvalCount != nil && chat.EvalCount != nil
 	if chat.Error != "" {
-		return "", fmt.Errorf("ollama báo lỗi: %s", chat.Error)
+		return result, fmt.Errorf("ollama báo lỗi: %s", chat.Error)
 	}
-	return chat.Message.Content, nil
+	return result, nil
 }

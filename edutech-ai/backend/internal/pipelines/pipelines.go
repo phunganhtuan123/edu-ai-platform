@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/ai-for-edu/edutech-ai/backend/internal/models"
-	"github.com/ai-for-edu/edutech-ai/backend/internal/ollama"
 )
 
 // ollamaChatter is the part of the Ollama client the pipelines need.
@@ -35,7 +34,7 @@ type Result struct {
 type ProgressFunc func(current, total int, label string)
 
 // Run dispatches a job to its pipeline.
-func Run(client *ollama.Client, model, jobType string, input json.RawMessage, progress ProgressFunc) (*Result, error) {
+func Run(client ollamaChatter, model, jobType string, input json.RawMessage, progress ProgressFunc) (*Result, error) {
 	switch jobType {
 	case models.JobTypeQuiz:
 		return runQuiz(client, model, input)
@@ -45,6 +44,8 @@ func Run(client *ollama.Client, model, jobType string, input json.RawMessage, pr
 		return runWriting(client, model, input)
 	case models.JobTypeActivity:
 		return runActivity(input)
+	case models.JobTypeLessonPlan:
+		return runLessonPlan(client, model, input)
 	case models.JobTypeTemplateAnalyze:
 		return runTemplateAnalyze(client, model, input)
 	case models.JobTypeTemplateGenerate:

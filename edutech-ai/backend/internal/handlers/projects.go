@@ -68,7 +68,7 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		return
 	}
 	if !SubjectGradeCompatible(req.Subject, req.GradeLevel) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cấp Mầm non đi với \"Giáo dục mầm non\"; môn học khác dành cho THCS/THPT", "field": "subject"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cấp Mầm non đi với \"Giáo dục mầm non\"; môn học khác dành cho Tiểu học/THCS/THPT", "field": "subject"})
 		return
 	}
 

@@ -8,6 +8,11 @@ export interface User {
   status: "pending" | "active" | "disabled";
   created_at?: string;
   jobs_this_month?: number;
+  /** Token AI cộng dồn — chỉ tính các job đã đo (usage_recorded_jobs). */
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  usage_recorded_jobs?: number;
 }
 
 export interface Project {
@@ -386,6 +391,7 @@ export const JOB_TYPE_LABELS: Record<string, string> = {
   template_analyze: "Phân tích mẫu",
   template_generate: "Nhân đề theo mẫu",
   mindmap: "Sơ đồ tư duy",
+  lesson_plan: "Giáo án",
 };
 
 export const BLOOM_LABELS: Record<string, string> = {
@@ -427,4 +433,83 @@ export function formatDateTime(iso?: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// ---------- Admin: lịch sử sử dụng AI ----------
+
+export interface UsageItem {
+  id: number | string;
+  user_id: number | string;
+  user_name: string;
+  user_email: string;
+  project_id: number | string | null;
+  type: string;
+  status: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  /**
+   * false = lượt chưa có số liệu token (chạy trước khi bật đo, đang chờ/đang
+   * chạy, hoặc máy chủ AI không trả số liệu). Khi đó các số token = 0 không phải số đo.
+   */
+  usage_recorded: boolean;
+  created_at?: string;
+}
+
+export interface UsageSummary {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  job_count: number;
+  recorded_job_count: number;
+}
+
+export interface UsagePage {
+  items: UsageItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  summary: UsageSummary;
+}
+
+function num(x: any): number {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function normalizeUsage(data: any, fallbackPage = 1, fallbackSize = 20): UsagePage {
+  const d = data || {};
+  const s = d.summary || {};
+  return {
+    items: asArray(d.items).map((it: any) => ({
+      id: it?.id ?? "",
+      user_id: it?.user_id ?? "",
+      user_name: str(it?.user_name),
+      user_email: str(it?.user_email),
+      project_id: it?.project_id ?? null,
+      type: str(it?.type),
+      status: str(it?.status),
+      model: str(it?.model),
+      prompt_tokens: num(it?.prompt_tokens),
+      completion_tokens: num(it?.completion_tokens),
+      total_tokens: num(it?.total_tokens),
+      usage_recorded: it?.usage_recorded === true,
+      created_at: it?.created_at ? str(it.created_at) : undefined,
+    })),
+    total: num(d.total),
+    page: num(d.page) || fallbackPage,
+    page_size: num(d.page_size) || fallbackSize,
+    summary: {
+      prompt_tokens: num(s.prompt_tokens),
+      completion_tokens: num(s.completion_tokens),
+      total_tokens: num(s.total_tokens),
+      job_count: num(s.job_count),
+      recorded_job_count: num(s.recorded_job_count),
+    },
+  };
+}
+
+export function formatNumber(n: number | undefined | null): string {
+  return typeof n === "number" && Number.isFinite(n) ? n.toLocaleString("vi-VN") : "—";
 }

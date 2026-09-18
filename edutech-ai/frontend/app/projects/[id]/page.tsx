@@ -21,24 +21,44 @@ import WritingTab from "@/components/tabs/WritingTab";
 import ActivityTab from "@/components/tabs/ActivityTab";
 import TemplateTab from "@/components/tabs/TemplateTab";
 import MindmapTab from "@/components/tabs/MindmapTab";
+import LessonPlanTab from "@/components/tabs/LessonPlanTab";
 
 const MODEL_KEY = "edutech_model";
 
-// Bộ tab theo cấp học: THCS/THPT dùng 5 module tiếng Anh, Mầm non dùng module
-// sơ đồ tư duy (mầm non không chia môn, không làm đề).
-const ENGLISH_TABS = [
+// Bộ tab theo cấp học + môn: 5 module tiếng Anh chỉ cho môn Tiếng Anh THCS/THPT;
+// sơ đồ tư duy chỉ cho Mầm non (không chia môn, không làm đề); giáo án cho mọi cấp.
+type TabKey =
+  | "quiz"
+  | "exam"
+  | "writing"
+  | "template"
+  | "activity"
+  | "mindmap"
+  | "lesson_plan";
+
+interface TabDef {
+  key: TabKey;
+  label: string;
+  icon: string;
+}
+
+const ENGLISH_TABS: TabDef[] = [
   { key: "quiz", label: "Trắc nghiệm", icon: "📝" },
   { key: "exam", label: "Đề thi", icon: "📄" },
   { key: "writing", label: "Chấm bài viết", icon: "✍️" },
   { key: "template", label: "Nhân đề theo mẫu", icon: "♻️" },
   { key: "activity", label: "Hoạt động tương tác", icon: "🎮" },
-] as const;
+];
+const MINDMAP_TAB: TabDef = { key: "mindmap", label: "Sơ đồ tư duy", icon: "🧠" };
+const LESSON_PLAN_TAB: TabDef = { key: "lesson_plan", label: "Giáo án", icon: "📘" };
 
-const MAMNON_TABS = [{ key: "mindmap", label: "Sơ đồ tư duy", icon: "🧠" }] as const;
-
-type TabKey =
-  | (typeof ENGLISH_TABS)[number]["key"]
-  | (typeof MAMNON_TABS)[number]["key"];
+function tabsFor(gradeLevel: string, subject: string): TabDef[] {
+  if (gradeLevel === "mamnon") return [MINDMAP_TAB, LESSON_PLAN_TAB];
+  if (subject === "english" && (gradeLevel === "thcs" || gradeLevel === "thpt")) {
+    return [...ENGLISH_TABS, LESSON_PLAN_TAB];
+  }
+  return [LESSON_PLAN_TAB];
+}
 
 const GRADE_LABELS: Record<string, string> = {
   thcs: "THCS",
@@ -50,6 +70,9 @@ const GRADE_LABELS: Record<string, string> = {
 const SUBJECT_LABELS: Record<string, string> = {
   english: "Tiếng Anh",
   mamnon_chung: "Giáo dục mầm non",
+  math: "Toán",
+  science: "Khoa học tự nhiên",
+  literature: "Ngữ văn",
 };
 
 const ARTIFACT_ICONS: Record<string, string> = {
@@ -59,6 +82,7 @@ const ARTIFACT_ICONS: Record<string, string> = {
   activity: "🎮",
   template_generate: "♻️",
   mindmap: "🧠",
+  lesson_plan: "📘",
 };
 
 function ProjectDetail() {
@@ -91,7 +115,7 @@ function ProjectDetail() {
       .then((d) => {
         const p = (d?.project || d) as Project;
         setProject(p);
-        if (p?.grade_level === "mamnon") setTab("mindmap");
+        if (p) setTab(tabsFor(p.grade_level, p.subject)[0].key);
       })
       .catch((e: any) =>
         setLoadError(e?.message || "Không tải được project.")
@@ -138,8 +162,8 @@ function ProjectDetail() {
     return (
       <div className="card border-rose-200 bg-rose-50 text-center">
         <p className="text-sm text-rose-700">{loadError}</p>
-        <Link href="/" className="btn-secondary mt-4">
-          ← Về danh sách projects
+        <Link href="/projects" className="btn-secondary mt-4">
+          ← Về danh sách dự án
         </Link>
       </div>
     );
@@ -154,7 +178,7 @@ function ProjectDetail() {
   }
 
   const gradeLevel = project.grade_level;
-  const tabs = gradeLevel === "mamnon" ? MAMNON_TABS : ENGLISH_TABS;
+  const tabs = tabsFor(gradeLevel, project.subject);
 
   return (
     <div>
@@ -162,10 +186,10 @@ function ProjectDetail() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link
-            href="/"
+            href="/projects"
             className="text-sm font-medium text-slate-500 hover:text-indigo-600"
           >
-            ← Projects
+            ← Dự án
           </Link>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">
             {project.name}
@@ -263,6 +287,15 @@ function ProjectDetail() {
               onArtifactCreated={onArtifactCreated}
             />
           )}
+          {tab === "lesson_plan" && (
+            <LessonPlanTab
+              projectId={projectId}
+              model={model}
+              gradeLevel={gradeLevel}
+              subject={project.subject}
+              onArtifactCreated={onArtifactCreated}
+            />
+          )}
           {tab === "activity" && (
             <ActivityTab
               projectId={projectId}
@@ -334,7 +367,7 @@ function ProjectDetail() {
             : ""
         }
         wide
-        xwide={(viewArtifact?.type || "").toLowerCase() === "mindmap"}
+        xwide={["mindmap", "lesson_plan"].includes((viewArtifact?.type || "").toLowerCase())}
       >
         {viewArtifact && (
           <ArtifactView artifact={viewArtifact} onChanged={refreshArtifacts} />

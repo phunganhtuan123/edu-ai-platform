@@ -103,6 +103,14 @@ export function countNodes(n: MindNode): number {
 
 export const MAX_NODES = 400;
 export const MAX_DEPTH = 6;
+/** Khớp giới hạn backend khi lưu sơ đồ đã sửa (đếm theo ký tự Unicode). */
+export const MAX_TEXT_LEN = 200;
+export const MAX_TAG_LEN = 40;
+
+/** Gộp khoảng trắng và cắt theo số ký tự Unicode (không cắt đôi ký tự). */
+export function clampText(s: string, max: number): string {
+  return Array.from((s || "").replace(/\s+/g, " ").trim()).slice(0, max).join("");
+}
 
 export function depthOf(root: MindNode, id: string): number {
   let d = -1;
@@ -112,6 +120,85 @@ export function depthOf(root: MindNode, id: string): number {
   };
   rec(root, 0);
   return d;
+}
+
+/** Số tầng của nhánh tính cả chính nó (lá = 1). */
+export function subtreeHeight(n: MindNode): number {
+  return 1 + Math.max(0, ...(n.children || []).map(subtreeHeight));
+}
+
+/** Đường từ gốc tới nút (gồm cả hai đầu); rỗng nếu không thấy. */
+export function pathTo(root: MindNode, id: string): MindNode[] {
+  if (root.id === id) return [root];
+  for (const c of root.children || []) {
+    const p = pathTo(c, id);
+    if (p.length) return [root, ...p];
+  }
+  return [];
+}
+
+/**
+ * Chuyển nhánh `id` thành con của `newParentId` tại vị trí `index` (trên bản
+ * sao). Trả null nếu nước đi không hợp lệ: gốc, chuyển vào chính nhánh con của
+ * mình, hoặc vượt giới hạn tầng.
+ */
+export function moveBranch(root: MindNode, id: string, newParentId: string, index: number): MindNode | null {
+  if (id === root.id) return null;
+  const src = findWithParent(root, id);
+  if (!src?.parent) return null;
+  if (pathTo(src.node, newParentId).length) return null; // đích nằm trong nhánh đang chuyển
+  const targetDepth = depthOf(root, newParentId);
+  if (targetDepth < 0 || targetDepth + subtreeHeight(src.node) > MAX_DEPTH) return null;
+
+  const next = cloneTree(root);
+  const from = findWithParent(next, id)!;
+  const fromList = from.parent!.children!;
+  const fromIdx = fromList.findIndex((c) => c.id === id);
+  fromList.splice(fromIdx, 1);
+  const target = findWithParent(next, newParentId)!.node;
+  const list = target.children || [];
+  list.splice(Math.max(0, Math.min(index, list.length)), 0, from.node);
+  target.children = list;
+  return next;
+}
+
+/** Hạ cấp: thành con cuối của anh em đứng trước (Tab trong XMind/outline). */
+export function indentBranch(root: MindNode, id: string): MindNode | null {
+  const f = findWithParent(root, id);
+  if (!f?.parent) return null;
+  const sibs = f.parent.children || [];
+  const idx = sibs.findIndex((c) => c.id === id);
+  if (idx <= 0) return null;
+  const prev = sibs[idx - 1];
+  return moveBranch(root, id, prev.id, (prev.children || []).length);
+}
+
+/** Nâng cấp: ra ngang hàng với cha, đứng ngay sau cha. */
+export function outdentBranch(root: MindNode, id: string): MindNode | null {
+  const f = findWithParent(root, id);
+  if (!f?.parent) return null;
+  const gp = findWithParent(root, f.parent.id)?.parent;
+  if (!gp) return null;
+  const pIdx = (gp.children || []).findIndex((c) => c.id === f.parent!.id);
+  return moveBranch(root, id, gp.id, pIdx + 1);
+}
+
+/** Bỏ dấu tiếng Việt + chữ thường để tìm kiếm không phân biệt dấu. */
+export function foldText(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/g, "d");
+}
+
+/** Mọi nhãn phụ (tag) đang dùng trong sơ đồ — gợi ý khi sửa tag. */
+export function collectTags(root: MindNode): string[] {
+  const set = new Set<string>();
+  walk(root, (n) => {
+    if (n.tag) set.add(n.tag);
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "vi"));
 }
 
 // ---------- Bố cục ----------

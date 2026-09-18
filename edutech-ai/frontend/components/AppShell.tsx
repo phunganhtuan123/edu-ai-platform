@@ -41,8 +41,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const navLink = (href: string, label: string) => {
-    const active =
-      href === "/" ? pathname === "/" : pathname.startsWith(href);
+    const active = pathname === href || pathname.startsWith(`${href}/`);
     return (
       <Link
         key={href}
@@ -65,13 +64,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
           <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
             <div className="flex items-center gap-6">
-              <Link href="/">
+              <Link href="/projects" aria-label="Về danh sách dự án">
                 <Logo />
               </Link>
               <nav className="hidden items-center gap-1 sm:flex">
-                {navLink("/", "Projects")}
+                {navLink("/projects", "Dự án")}
                 {navLink("/cai-dat", "Cài đặt")}
-                {user?.role === "admin" && navLink("/admin/users", "Quản trị")}
+                {user?.role === "admin" && navLink("/admin", "Quản trị")}
               </nav>
             </div>
             <div className="hidden items-center gap-3 sm:flex">
@@ -105,9 +104,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {menuOpen && (
             <div className="border-t border-slate-200 bg-white px-4 py-3 sm:hidden">
               <div className="flex flex-col gap-1">
-                {navLink("/", "Projects")}
+                {navLink("/projects", "Dự án")}
                 {navLink("/cai-dat", "Cài đặt")}
-                {user?.role === "admin" && navLink("/admin/users", "Quản trị")}
+                {user?.role === "admin" && navLink("/admin", "Quản trị")}
                 <button
                   onClick={logout}
                   className="mt-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-rose-600 hover:bg-rose-50"

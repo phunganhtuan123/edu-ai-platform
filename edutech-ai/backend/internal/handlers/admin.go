@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/ai-for-edu/edutech-ai/backend/internal/auth"
 	"github.com/ai-for-edu/edutech-ai/backend/internal/models"
@@ -13,7 +14,19 @@ import (
 
 type adminUserRow struct {
 	models.User
-	JobsThisMonth int64 `json:"jobs_this_month"`
+	JobsThisMonth     int64 `json:"jobs_this_month"`
+	PromptTokens      int64 `json:"prompt_tokens"`
+	CompletionTokens  int64 `json:"completion_tokens"`
+	TotalTokens       int64 `json:"total_tokens"`
+	UsageRecordedJobs int64 `json:"usage_recorded_jobs"`
+}
+
+type userUsageAggregate struct {
+	UserID            uint
+	PromptTokens      int64
+	CompletionTokens  int64
+	TotalTokens       int64
+	UsageRecordedJobs int64
 }
 
 // AdminListUsers lists users, optionally filtered by ?status=, with each
@@ -28,6 +41,29 @@ func (h *Handler) AdminListUsers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không đọc được danh sách người dùng"})
 		return
 	}
+	userIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		userIDs = append(userIDs, user.ID)
+	}
+	usageByUser := make(map[uint]userUsageAggregate, len(users))
+	if len(userIDs) > 0 {
+		var aggregates []userUsageAggregate
+		if err := h.DB.Model(&models.Job{}).
+			Select(`user_id,
+				COALESCE(SUM(CASE WHEN usage_recorded THEN prompt_tokens ELSE 0 END), 0) AS prompt_tokens,
+				COALESCE(SUM(CASE WHEN usage_recorded THEN completion_tokens ELSE 0 END), 0) AS completion_tokens,
+				COALESCE(SUM(CASE WHEN usage_recorded THEN total_tokens ELSE 0 END), 0) AS total_tokens,
+				COALESCE(SUM(CASE WHEN usage_recorded THEN 1 ELSE 0 END), 0) AS usage_recorded_jobs`).
+			Where("user_id IN ?", userIDs).
+			Group("user_id").
+			Scan(&aggregates).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không đọc được thống kê sử dụng AI"})
+			return
+		}
+		for _, aggregate := range aggregates {
+			usageByUser[aggregate.UserID] = aggregate
+		}
+	}
 
 	now := time.Now()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
@@ -35,9 +71,138 @@ func (h *Handler) AdminListUsers(c *gin.Context) {
 	for _, u := range users {
 		var count int64
 		h.DB.Model(&models.Job{}).Where("user_id = ? AND created_at >= ?", u.ID, monthStart).Count(&count)
-		rows = append(rows, adminUserRow{User: u, JobsThisMonth: count})
+		usage := usageByUser[u.ID]
+		rows = append(rows, adminUserRow{
+			User:              u,
+			JobsThisMonth:     count,
+			PromptTokens:      usage.PromptTokens,
+			CompletionTokens:  usage.CompletionTokens,
+			TotalTokens:       usage.TotalTokens,
+			UsageRecordedJobs: usage.UsageRecordedJobs,
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{"users": rows})
+}
+
+type adminUsageRow struct {
+	ID               uint      `json:"id"`
+	UserID           uint      `json:"user_id"`
+	UserName         string    `json:"user_name"`
+	UserEmail        string    `json:"user_email"`
+	ProjectID        uint      `json:"project_id"`
+	Type             string    `json:"type"`
+	Status           string    `json:"status"`
+	Model            string    `json:"model"`
+	PromptTokens     int64     `json:"prompt_tokens"`
+	CompletionTokens int64     `json:"completion_tokens"`
+	TotalTokens      int64     `json:"total_tokens"`
+	UsageRecorded    bool      `json:"usage_recorded"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type adminUsageSummary struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	JobCount         int64 `json:"job_count"`
+	RecordedJobCount int64 `json:"recorded_job_count"`
+}
+
+func parsePositiveQuery(c *gin.Context, key string, defaultValue int) (int, bool) {
+	raw := c.Query(key)
+	if raw == "" {
+		return defaultValue, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": key + " phải là số nguyên dương"})
+		return 0, false
+	}
+	return value, true
+}
+
+func (h *Handler) adminUsageQuery(userID *uint) *gorm.DB {
+	q := h.DB.Table("jobs AS jobs").Joins("JOIN users ON users.id = jobs.user_id")
+	if userID != nil {
+		q = q.Where("jobs.user_id = ?", *userID)
+	}
+	return q
+}
+
+// AdminUsage returns paginated AI job history and totals over the complete
+// filtered result. Jobs predating usage measurement remain explicitly marked
+// usage_recorded=false and contribute no invented token counts.
+func (h *Handler) AdminUsage(c *gin.Context) {
+	page, ok := parsePositiveQuery(c, "page", 1)
+	if !ok {
+		return
+	}
+	if page > 1_000_000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page quá lớn"})
+		return
+	}
+	pageSize, ok := parsePositiveQuery(c, "page_size", 20)
+	if !ok {
+		return
+	}
+	if pageSize > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page_size tối đa 100"})
+		return
+	}
+
+	var userID *uint
+	if raw := c.Query("user_id"); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || parsed == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id phải là ID hợp lệ"})
+			return
+		}
+		value := uint(parsed)
+		userID = &value
+	}
+
+	var total int64
+	if err := h.adminUsageQuery(userID).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không đọc được lịch sử sử dụng AI"})
+		return
+	}
+
+	var summary adminUsageSummary
+	if err := h.adminUsageQuery(userID).
+		Select(`
+			COALESCE(SUM(CASE WHEN jobs.usage_recorded THEN jobs.prompt_tokens ELSE 0 END), 0) AS prompt_tokens,
+			COALESCE(SUM(CASE WHEN jobs.usage_recorded THEN jobs.completion_tokens ELSE 0 END), 0) AS completion_tokens,
+			COALESCE(SUM(CASE WHEN jobs.usage_recorded THEN jobs.total_tokens ELSE 0 END), 0) AS total_tokens,
+			COUNT(*) AS job_count,
+			COALESCE(SUM(CASE WHEN jobs.usage_recorded THEN 1 ELSE 0 END), 0) AS recorded_job_count`).
+		Scan(&summary).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không đọc được thống kê sử dụng AI"})
+		return
+	}
+
+	var items []adminUsageRow
+	if err := h.adminUsageQuery(userID).
+		Select(`jobs.id, jobs.user_id, users.name AS user_name, users.email AS user_email,
+			jobs.project_id, jobs.type, jobs.status, jobs.model, jobs.prompt_tokens,
+			jobs.completion_tokens, jobs.total_tokens, jobs.usage_recorded, jobs.created_at`).
+		Order("jobs.created_at DESC, jobs.id DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Scan(&items).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không đọc được lịch sử sử dụng AI"})
+		return
+	}
+
+	if items == nil {
+		items = []adminUsageRow{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+		"summary":   summary,
+	})
 }
 
 type patchUserRequest struct {

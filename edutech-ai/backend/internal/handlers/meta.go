@@ -16,20 +16,20 @@ type CatalogEntry struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// Subjects available in the MVP: English (THCS/THPT) and the general preschool
-// program (Mầm non không chia môn — dạy theo lĩnh vực phát triển).
+// Project subjects. JobTypeAllowedForProject still keeps the existing English
+// modules restricted to English THCS/THPT projects.
 var Subjects = []CatalogEntry{
 	{Key: "english", Name: "Tiếng Anh", Enabled: true},
 	{Key: SubjectMamNon, Name: "Giáo dục mầm non", Enabled: true},
-	{Key: "math", Name: "Toán", Enabled: false},
-	{Key: "science", Name: "Khoa học tự nhiên", Enabled: false},
-	{Key: "literature", Name: "Ngữ văn", Enabled: false},
+	{Key: "math", Name: "Toán", Enabled: true},
+	{Key: "science", Name: "Khoa học tự nhiên", Enabled: true},
+	{Key: "literature", Name: "Ngữ văn", Enabled: true},
 }
 
-// GradeLevels available in the MVP: THCS and THPT enabled.
+// GradeLevels available for projects and the lesson-plan module.
 var GradeLevels = []CatalogEntry{
 	{Key: GradeMamNon, Name: "Mầm non", Enabled: true},
-	{Key: "tieuhoc", Name: "Tiểu học", Enabled: false},
+	{Key: "tieuhoc", Name: "Tiểu học", Enabled: true},
 	{Key: "thcs", Name: "THCS", Enabled: true},
 	{Key: "thpt", Name: "THPT", Enabled: true},
 }

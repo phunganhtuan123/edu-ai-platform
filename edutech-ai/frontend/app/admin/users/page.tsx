@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { apiDelete, apiGet, apiPatch } from "@/lib/api";
-import { User, formatDate } from "@/lib/types";
+import { User, formatDate, formatNumber } from "@/lib/types";
 import AppShell, { Spinner, useCurrentUser } from "@/components/AppShell";
 import Badge from "@/components/Badge";
 import Modal from "@/components/Modal";
+import AdminNav from "@/components/admin/AdminNav";
 
 const STATUS_TABS: { key: string; label: string }[] = [
   { key: "pending", label: "Chờ duyệt" },
@@ -19,6 +21,23 @@ function StatusBadge({ status }: { status: User["status"] }) {
   if (status === "pending") return <Badge color="amber">Chờ duyệt</Badge>;
   if (status === "disabled") return <Badge color="rose">Đã khóa</Badge>;
   return <Badge>{status}</Badge>;
+}
+
+/** Token AI của một người dùng; chưa có job nào được đo thì nói rõ, không hiện 0. */
+function TokenCell({ user }: { user: User }) {
+  const recorded = user.usage_recorded_jobs ?? 0;
+  if (!recorded) {
+    return <span className="text-xs text-slate-400">Chưa ghi nhận</span>;
+  }
+  return (
+    <div>
+      <div className="font-medium tabular-nums text-slate-800">{formatNumber(user.total_tokens ?? 0)}</div>
+      <div className="text-[11px] tabular-nums text-slate-500">
+        vào {formatNumber(user.prompt_tokens ?? 0)} · ra {formatNumber(user.completion_tokens ?? 0)}
+      </div>
+      <div className="text-[11px] text-slate-400">{formatNumber(recorded)} job đã đo</div>
+    </div>
+  );
 }
 
 function AdminUsers() {
@@ -77,6 +96,7 @@ function AdminUsers() {
 
   return (
     <div>
+      <AdminNav />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">
           Quản trị người dùng
@@ -119,12 +139,13 @@ function AdminUsers() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="w-full min-w-[800px] text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-5 py-3 font-semibold">Người dùng</th>
                   <th className="px-5 py-3 font-semibold">Trạng thái</th>
                   <th className="px-5 py-3 font-semibold">Job / tháng</th>
+                  <th className="px-5 py-3 font-semibold">Token AI</th>
                   <th className="px-5 py-3 font-semibold">Ngày tạo</th>
                   <th className="px-5 py-3 text-right font-semibold">
                     Thao tác
@@ -156,6 +177,15 @@ function AdminUsers() {
                       </td>
                       <td className="px-5 py-3.5 text-slate-600">
                         {u.jobs_this_month ?? "—"}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <TokenCell user={u} />
+                        <Link
+                          href={`/admin/usage?user_id=${encodeURIComponent(String(u.id))}`}
+                          className="mt-1 inline-block text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                        >
+                          Xem lịch sử →
+                        </Link>
                       </td>
                       <td className="px-5 py-3.5 text-slate-600">
                         {formatDate(u.created_at) || "—"}

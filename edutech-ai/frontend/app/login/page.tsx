@@ -26,7 +26,7 @@ export default function LoginPage() {
       const token = data?.token || data?.access_token || data?.jwt;
       if (!token) throw new Error("Phản hồi đăng nhập không hợp lệ.");
       setToken(token);
-      router.replace("/");
+      router.replace("/projects");
     } catch (err: any) {
       if (err instanceof ApiError && err.status === 403) {
         const code = (err.code || "").toLowerCase();
@@ -51,12 +51,14 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-50 to-emerald-50 px-4">
       <div className="w-full max-w-md">
         <div className="mb-8 flex justify-center">
-          <Logo size="lg" />
+          <Link href="/" aria-label="Về trang giới thiệu">
+            <Logo size="lg" />
+          </Link>
         </div>
         <div className="card !p-8">
           <h1 className="text-xl font-bold text-slate-900">Đăng nhập</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Trợ lý AI soạn bài cho giáo viên tiếng Anh
+            Trợ lý AI soạn bài cho giáo viên
           </p>
           <form onSubmit={onSubmit} className="mt-6 space-y-4">
             <div>

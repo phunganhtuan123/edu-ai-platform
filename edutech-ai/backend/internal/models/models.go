@@ -31,10 +31,11 @@ const (
 
 // Job types.
 const (
-	JobTypeQuiz     = "quiz"
-	JobTypeExam     = "exam"
-	JobTypeWriting  = "writing"
-	JobTypeActivity = "activity"
+	JobTypeQuiz       = "quiz"
+	JobTypeExam       = "exam"
+	JobTypeWriting    = "writing"
+	JobTypeActivity   = "activity"
+	JobTypeLessonPlan = "lesson_plan"
 	// Module 5 chạy hai bước: phân tích cấu trúc mẫu, rồi sinh nội dung mới.
 	JobTypeTemplateAnalyze  = "template_analyze"
 	JobTypeTemplateGenerate = "template_generate"
@@ -71,11 +72,17 @@ type Job struct {
 	Input     datatypes.JSON `gorm:"type:jsonb" json:"input"`
 	// Progress là tiến độ của job nhiều bước: {"current":3,"total":6,"label":"..."}.
 	// Rỗng với job một bước.
-	Progress   datatypes.JSON `gorm:"type:jsonb" json:"progress,omitempty"`
-	Error      string         `gorm:"type:text" json:"error,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
-	StartedAt  *time.Time     `json:"started_at,omitempty"`
-	FinishedAt *time.Time     `json:"finished_at,omitempty"`
+	Progress datatypes.JSON `gorm:"type:jsonb" json:"progress,omitempty"`
+	Error    string         `gorm:"type:text" json:"error,omitempty"`
+	// UsageRecorded true khi có ít nhất một Ollama call trả đủ số liệu (kể cả
+	// số đo thực bằng 0). Token chỉ cộng từ các call đã đo, không suy đoán.
+	PromptTokens     int64      `gorm:"not null;default:0" json:"prompt_tokens"`
+	CompletionTokens int64      `gorm:"not null;default:0" json:"completion_tokens"`
+	TotalTokens      int64      `gorm:"not null;default:0" json:"total_tokens"`
+	UsageRecorded    bool       `gorm:"not null;default:false;index" json:"usage_recorded"`
+	CreatedAt        time.Time  `json:"created_at"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
 }
 
 type Artifact struct {

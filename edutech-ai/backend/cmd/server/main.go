@@ -72,6 +72,7 @@ func main() {
 			admin.Use(auth.AdminOnly())
 			{
 				admin.GET("/users", h.AdminListUsers)
+				admin.GET("/usage", h.AdminUsage)
 				admin.PATCH("/users/:id", h.AdminPatchUser)
 				admin.DELETE("/users/:id", h.AdminDeleteUser)
 			}

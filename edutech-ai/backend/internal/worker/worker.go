@@ -6,6 +6,7 @@ package worker
 import (
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"gorm.io/datatypes"
@@ -18,8 +19,61 @@ import (
 
 type Pool struct {
 	db     *gorm.DB
-	client *ollama.Client
+	client usageChatter
 	queue  chan uint
+}
+
+type usageChatter interface {
+	ChatStructuredWithUsage(model, system, user string, schema map[string]any) (ollama.ChatResult, error)
+}
+
+// jobUsageChatter belongs to exactly one job. It accumulates every Ollama call
+// that returned complete counts, including calls before a later failure.
+// Separate job-local instances prevent concurrent workers from mixing usage.
+type jobUsageChatter struct {
+	client usageChatter
+	mu     sync.Mutex
+	usage  ollama.Usage
+}
+
+func newJobUsageChatter(client usageChatter) *jobUsageChatter {
+	return &jobUsageChatter{client: client}
+}
+
+func (c *jobUsageChatter) ChatStructured(model, system, user string, schema map[string]any) (string, error) {
+	result, err := c.client.ChatStructuredWithUsage(model, system, user, schema)
+	c.mu.Lock()
+	if result.Usage.Recorded {
+		c.usage.PromptTokens += result.Usage.PromptTokens
+		c.usage.CompletionTokens += result.Usage.CompletionTokens
+		c.usage.TotalTokens += result.Usage.TotalTokens
+		c.usage.Recorded = true
+	}
+	c.mu.Unlock()
+	return result.Content, err
+}
+
+func (c *jobUsageChatter) Usage() ollama.Usage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usage
+}
+
+func usageUpdates(tracker *jobUsageChatter) map[string]any {
+	usage := tracker.Usage()
+	return map[string]any{
+		"prompt_tokens":     usage.PromptTokens,
+		"completion_tokens": usage.CompletionTokens,
+		"total_tokens":      usage.TotalTokens,
+		"usage_recorded":    usage.Recorded,
+	}
+}
+
+func mergeUpdates(base, extra map[string]any) map[string]any {
+	for key, value := range extra {
+		base[key] = value
+	}
+	return base
 }
 
 // New creates a pool with the given concurrency cap.
@@ -104,15 +158,16 @@ func (p *Pool) process(jobID uint) {
 		}
 	}
 
-	result, err := pipelines.Run(p.client, job.Model, job.Type, json.RawMessage(job.Input), onProgress)
+	usageTracker := newJobUsageChatter(p.client)
+	result, err := pipelines.Run(usageTracker, job.Model, job.Type, json.RawMessage(job.Input), onProgress)
 	finished := time.Now()
 	if err != nil {
 		log.Printf("worker: job %d thất bại: %v", job.ID, err)
-		p.db.Model(&job).Updates(map[string]any{
+		p.db.Model(&job).Updates(mergeUpdates(map[string]any{
 			"status":      models.JobFailed,
 			"error":       err.Error(),
 			"finished_at": &finished,
-		})
+		}, usageUpdates(usageTracker)))
 		return
 	}
 
@@ -129,11 +184,11 @@ func (p *Pool) process(jobID uint) {
 	}
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
-		p.db.Model(&job).Updates(map[string]any{
+		p.db.Model(&job).Updates(mergeUpdates(map[string]any{
 			"status":      models.JobFailed,
 			"error":       "không serialize được kết quả: " + err.Error(),
 			"finished_at": &finished,
-		})
+		}, usageUpdates(usageTracker)))
 		return
 	}
 
@@ -148,18 +203,18 @@ func (p *Pool) process(jobID uint) {
 		if err := tx.Create(&artifact).Error; err != nil {
 			return err
 		}
-		return tx.Model(&models.Job{}).Where("id = ?", job.ID).Updates(map[string]any{
+		return tx.Model(&models.Job{}).Where("id = ?", job.ID).Updates(mergeUpdates(map[string]any{
 			"status":      models.JobDone,
 			"finished_at": &finished,
-		}).Error
+		}, usageUpdates(usageTracker))).Error
 	})
 	if err != nil {
 		log.Printf("worker: job %d không lưu được kết quả: %v", job.ID, err)
-		p.db.Model(&job).Updates(map[string]any{
+		p.db.Model(&job).Updates(mergeUpdates(map[string]any{
 			"status":      models.JobFailed,
 			"error":       "không lưu được kết quả: " + err.Error(),
 			"finished_at": &finished,
-		})
+		}, usageUpdates(usageTracker)))
 		return
 	}
 	log.Printf("worker: job %d xong sau %s (%d cảnh báo)", job.ID, finished.Sub(now).Round(time.Second), len(result.Warnings))

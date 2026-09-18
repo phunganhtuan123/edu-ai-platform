@@ -12,6 +12,7 @@ import ExamResult from "./results/ExamResult";
 import WritingResult from "./results/WritingResult";
 import ActivityResult from "./results/ActivityResult";
 import MindmapResult from "./results/MindmapResult";
+import LessonPlanResult from "./results/LessonPlanResult";
 
 /** Renders a saved artifact by type (used by the history panel). */
 export default function ArtifactView({
@@ -67,6 +68,8 @@ export default function ArtifactView({
           onSaved={onChanged}
         />
       );
+    case "lesson_plan":
+      return <LessonPlanResult content={artifact.content} title={artifact.title} />;
     default:
       return (
         <pre className="overflow-x-auto rounded-xl bg-slate-900 p-4 text-xs text-slate-100">
