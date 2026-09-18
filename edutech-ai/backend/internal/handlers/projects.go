@@ -6,10 +6,32 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/ai-for-edu/edutech-ai/backend/internal/auth"
 	"github.com/ai-for-edu/edutech-ai/backend/internal/models"
 )
+
+func artifactDeleteLockQuery(tx *gorm.DB) *gorm.DB {
+	q := tx.Model(&models.Artifact{}).Select("id").Order("id")
+	if tx.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	return q
+}
+
+func lockArtifactIDsForDelete(tx *gorm.DB, where string, args ...any) ([]uint, error) {
+	var artifacts []models.Artifact
+	if err := artifactDeleteLockQuery(tx).Where(where, args...).Find(&artifacts).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]uint, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		ids = append(ids, artifact.ID)
+	}
+	return ids, nil
+}
 
 // loadOwnedProject fetches the project and enforces that the current user
 // owns it (admin may access any). Writes the error response itself and
@@ -101,9 +123,25 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 	if project == nil {
 		return
 	}
-	h.DB.Where("project_id = ?", project.ID).Delete(&models.Artifact{})
-	h.DB.Where("project_id = ?", project.ID).Delete(&models.Job{})
-	if err := h.DB.Delete(project).Error; err != nil {
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		artifactIDs, err := lockArtifactIDsForDelete(tx, "project_id = ?", project.ID)
+		if err != nil {
+			return err
+		}
+		if len(artifactIDs) > 0 {
+			if err := tx.Where("artifact_id IN ?", artifactIDs).Delete(&models.MindmapAttachment{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("project_id = ?", project.ID).Delete(&models.Artifact{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", project.ID).Delete(&models.Job{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(project).Error
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xóa được project"})
 		return
 	}

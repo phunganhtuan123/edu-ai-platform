@@ -279,14 +279,34 @@ func (h *Handler) AdminDeleteUser(c *gin.Context) {
 	}
 
 	// Cascade-delete the user's data (MVP: explicit deletes, no FK cascade).
-	var projectIDs []uint
-	h.DB.Model(&models.Project{}).Where("user_id = ?", user.ID).Pluck("id", &projectIDs)
-	if len(projectIDs) > 0 {
-		h.DB.Where("project_id IN ?", projectIDs).Delete(&models.Artifact{})
-	}
-	h.DB.Where("user_id = ?", user.ID).Delete(&models.Job{})
-	h.DB.Where("user_id = ?", user.ID).Delete(&models.Project{})
-	if err := h.DB.Delete(&user).Error; err != nil {
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		var projectIDs []uint
+		if err := tx.Model(&models.Project{}).Where("user_id = ?", user.ID).Pluck("id", &projectIDs).Error; err != nil {
+			return err
+		}
+		if len(projectIDs) > 0 {
+			artifactIDs, err := lockArtifactIDsForDelete(tx, "project_id IN ?", projectIDs)
+			if err != nil {
+				return err
+			}
+			if len(artifactIDs) > 0 {
+				if err := tx.Where("artifact_id IN ?", artifactIDs).Delete(&models.MindmapAttachment{}).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Where("project_id IN ?", projectIDs).Delete(&models.Artifact{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.Job{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.Project{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&user).Error
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xóa được người dùng"})
 		return
 	}

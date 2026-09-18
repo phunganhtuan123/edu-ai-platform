@@ -14,6 +14,7 @@ import {
   type MindmapContent,
   cloneTree,
   collectTags,
+  walk,
   computeLayout,
   countNodes,
   depthOf,
@@ -28,7 +29,10 @@ import {
   slugify,
   svgToPngBlob,
 } from "@/lib/mindmap";
+import { groupByLiveNodes, runAttachmentUpload, totalBytes, type UploadPhase } from "@/lib/mindmapAttachments";
 import MindmapSidePanel, { type NodeActions, type PanelTab } from "./MindmapSidePanel";
+import type { AttachmentNotice } from "./MindmapAttachments";
+import { useMindmapAttachments } from "./useMindmapAttachments";
 
 interface History {
   past: MindNode[];
@@ -83,12 +87,16 @@ export default function MindMapEditor({
   meta,
   title,
   onSave,
+  artifactId,
 }: {
   initialRoot: MindNode;
   meta?: Partial<MindmapContent>;
   title?: string;
-  /** Lưu cây đã sửa lên máy chủ. Không truyền = chỉ sửa tạm, không lưu. */
-  onSave?: (root: MindNode) => Promise<void>;
+  /** Lưu cây đã sửa lên máy chủ. Không truyền = chỉ sửa tạm, không lưu.
+   *  Có thể trả cây máy chủ đã lưu để đối chiếu id nút trước khi đính kèm tệp. */
+  onSave?: (root: MindNode) => Promise<unknown>;
+  /** Id kết quả trên máy chủ; không có thì mục Tệp đính kèm bị tắt. */
+  artifactId?: number | string;
 }) {
   const [hist, setHist] = useState<History>(() => ({
     past: [],
@@ -109,6 +117,13 @@ export default function MindMapEditor({
   const [panelTab, setPanelTab] = useState<PanelTab>("outline");
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const attachments = useMindmapAttachments(artifactId);
+  const [attBusy, setAttBusy] = useState<{ phase: UploadPhase; nodeId: string } | null>(null);
+  const [attNotice, setAttNotice] = useState<AttachmentNotice | null>(null);
+  // Khoá đồng bộ khi đang lưu hoặc tải tệp: mọi thao tác đổi cây/chọn nút bị bỏ qua
+  // để không mất thay đổi và không đổi nút đích ngoài ý muốn.
+  const lockRef = useRef(false);
+  const locked = saving || attBusy != null;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -127,6 +142,15 @@ export default function MindMapEditor({
   const dirty = useMemo(() => JSON.stringify(tree) !== savedJson, [tree, savedJson]);
   const total = useMemo(() => countNodes(tree), [tree]);
   const tags = useMemo(() => collectTags(tree), [tree]);
+  const attItems = attachments.list.items;
+  const attUsed = useMemo(() => totalBytes(attItems), [attItems]);
+  // Badge chỉ cho nút còn trong cây hiện tại; tệp của nhánh vừa xoá vẫn còn trên
+  // máy chủ và hiện lại khi hoàn tác.
+  const attGroups = useMemo(() => {
+    const ids = new Set<string>();
+    walk(tree, (n) => void ids.add(n.id));
+    return groupByLiveNodes(attItems, ids);
+  }, [tree, attItems]);
 
   // ---------- Lịch sử ----------
 
@@ -134,6 +158,7 @@ export default function MindMapEditor({
     setHist((h) => ({ past: [...h.past.slice(-49), h.present], present: next, future: [] }));
   }, []);
   const undo = useCallback(() => {
+    if (lockRef.current) return;
     editOpenRef.current = false;
     setEditing(null);
     setHist((h) =>
@@ -147,6 +172,7 @@ export default function MindMapEditor({
     );
   }, []);
   const redo = useCallback(() => {
+    if (lockRef.current) return;
     editOpenRef.current = false;
     setEditing(null);
     setHist((h) =>
@@ -257,6 +283,7 @@ export default function MindMapEditor({
   }
 
   function addChild(id: string) {
+    if (lockRef.current) return;
     if (total >= MAX_NODES) return flash("error", `Sơ đồ tối đa ${MAX_NODES} nút.`);
     if (depthOf(tree, id) >= MAX_DEPTH) return flash("error", `Sơ đồ tối đa ${MAX_DEPTH} tầng.`);
     const next = cloneTree(tree);
@@ -275,6 +302,7 @@ export default function MindMapEditor({
   }
 
   function addSibling(id: string) {
+    if (lockRef.current) return;
     const found = findWithParent(tree, id);
     if (!found?.parent) return addChild(id);
     if (total >= MAX_NODES) return flash("error", `Sơ đồ tối đa ${MAX_NODES} nút.`);
@@ -291,6 +319,7 @@ export default function MindMapEditor({
   }
 
   function remove(id: string) {
+    if (lockRef.current) return;
     const found = findWithParent(tree, id);
     if (!found?.parent) return;
     const next = cloneTree(tree);
@@ -303,6 +332,7 @@ export default function MindMapEditor({
   }
 
   function move(id: string, dir: -1 | 1) {
+    if (lockRef.current) return;
     const found = findWithParent(tree, id);
     if (!found?.parent) return;
     const idx = (found.parent.children || []).findIndex((c) => c.id === id);
@@ -315,6 +345,7 @@ export default function MindMapEditor({
   }
 
   function indent(id: string) {
+    if (lockRef.current) return;
     const next = indentBranch(tree, id);
     if (!next) {
       const f = findWithParent(tree, id);
@@ -325,12 +356,14 @@ export default function MindMapEditor({
   }
 
   function outdent(id: string) {
+    if (lockRef.current) return;
     const next = outdentBranch(tree, id);
     if (!next) return flash("error", "Nhánh cấp 1 không nâng cấp được nữa.");
     commit(next);
   }
 
   function rename(id: string, text: string) {
+    if (lockRef.current) return;
     const next = cloneTree(tree);
     const f = findWithParent(next, id);
     const value = clampText(text, MAX_TEXT_LEN);
@@ -340,6 +373,7 @@ export default function MindMapEditor({
   }
 
   function retag(id: string, tag: string) {
+    if (lockRef.current) return;
     const next = cloneTree(tree);
     const f = findWithParent(next, id);
     if (!f) return;
@@ -349,6 +383,7 @@ export default function MindMapEditor({
 
   /** Chọn nút từ dàn ý/tìm kiếm: mở các nhánh cha đang thu gọn để nút hiện trên sơ đồ. */
   function selectNode(id: string) {
+    if (lockRef.current) return;
     const ancestors = pathTo(tree, id).slice(0, -1);
     if (ancestors.some((a) => collapsed.has(a.id))) {
       const c = new Set(collapsed);
@@ -366,6 +401,7 @@ export default function MindMapEditor({
   }
 
   function startEdit(id: string) {
+    if (lockRef.current) return;
     const found = findWithParent(tree, id);
     if (!found) return;
     setSelectedId(id);
@@ -430,6 +466,16 @@ export default function MindMapEditor({
   function onKeyDown(e: React.KeyboardEvent) {
     if (editing) return;
     const mod = e.ctrlKey || e.metaKey;
+    if (lockRef.current) {
+      // Đang lưu/tải tệp: bỏ mọi phím tắt sửa cây, chỉ cho thoát toàn màn hình.
+      if (mod && ["z", "y", "s"].includes(e.key.toLowerCase())) e.preventDefault();
+      else if (e.key === "Escape" && fullscreen) {
+        e.preventDefault();
+        e.stopPropagation();
+        setFullscreen(false);
+      }
+      return;
+    }
     if (mod && e.key.toLowerCase() === "z") {
       e.preventDefault();
       return e.shiftKey ? redo() : undo();
@@ -497,14 +543,15 @@ export default function MindMapEditor({
   function onPointerUp() {
     const d = dragRef.current;
     dragRef.current = null;
-    if (d && !d.moved) setSelectedId(null);
+    if (d && !d.moved && !lockRef.current) setSelectedId(null);
   }
 
   // ---------- Lưu & xuất ----------
 
   async function save() {
-    if (!onSave || saving) return;
+    if (!onSave || saving || lockRef.current) return;
     if (editing) finishEdit("commit");
+    lockRef.current = true;
     setSaving(true);
     try {
       await onSave(tree);
@@ -513,7 +560,47 @@ export default function MindMapEditor({
     } catch (err: any) {
       flash("error", err?.message || "Lưu thất bại.");
     } finally {
+      lockRef.current = false;
       setSaving(false);
+    }
+  }
+
+  /** Đính kèm tệp vào nút `nodeId` (đã chốt lúc chọn tệp). Cây chưa lưu thì lưu trước. */
+  async function attachFile(nodeId: string, file: File) {
+    if (lockRef.current || editing) return;
+    const root = tree;
+    if (!findWithParent(root, nodeId)) return;
+    const snapshot = JSON.stringify(root);
+    const needsSave = snapshot !== savedJson;
+    if (needsSave && !onSave) {
+      setAttNotice({ kind: "error", text: "Sơ đồ này không lưu được nên chưa đính kèm tệp.", nodeId });
+      return;
+    }
+    lockRef.current = true;
+    setAttNotice(null);
+    try {
+      const created = await runAttachmentUpload({
+        nodeId,
+        file,
+        usedBytes: attUsed,
+        needsSave,
+        save: async () => {
+          const savedRoot = await onSave!(root);
+          setSavedJson(snapshot);
+          flash("ok", "Đã tự lưu sơ đồ trước khi đính kèm tệp.");
+          return savedRoot;
+        },
+        upload: () => attachments.upload(nodeId, file),
+        onPhase: (phase) => setAttBusy({ phase, nodeId }),
+      });
+      setAttNotice({ kind: "ok", text: `Đã đính kèm “${created.name}”.`, nodeId });
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        setAttNotice({ kind: "error", text: err?.message || "Tải tệp lên thất bại.", nodeId });
+      }
+    } finally {
+      lockRef.current = false;
+      setAttBusy(null);
     }
   }
 
@@ -557,6 +644,7 @@ export default function MindMapEditor({
   }, [editing?.id]);
 
   function renderNode(n: LayoutNode) {
+    const files = attGroups.counts.get(n.id) || 0;
     const left = n.x - n.w / 2;
     const top = n.y - n.h / 2;
     const st = n.style;
@@ -574,6 +662,7 @@ export default function MindMapEditor({
         onPointerDown={(e) => {
           activeRef.current = true;
           e.stopPropagation();
+          if (lockRef.current) return;
           if (editing && editing.id !== n.id) finishEdit("commit");
           setSelectedId(n.id);
         }}
@@ -651,6 +740,31 @@ export default function MindMapEditor({
           >
             {n.node.tag}
           </text>
+        )}
+        {files > 0 && (
+          // Badge số tệp: chỉ trên màn hình (data-noexport), bấm để mở mục Tệp đính kèm.
+          <g
+            data-noexport=""
+            onClick={(e) => {
+              e.stopPropagation();
+              setPanelOpen(true);
+              setPanelTab("inspector");
+            }}
+          >
+            <title>{`${files} tệp đính kèm — bấm để xem`}</title>
+            <rect x={left + n.w - 22} y={top - 9} width={30} height={17} rx={8.5} fill="#fef3c7" stroke="#f59e0b" strokeWidth={1} />
+            <text
+              x={left + n.w - 7}
+              y={top + 3}
+              textAnchor="middle"
+              fontSize={10}
+              fontWeight={600}
+              fill="#92400e"
+              fontFamily={FONT_FAMILY}
+            >
+              {`📎${files > 99 ? "99+" : files}`}
+            </text>
+          </g>
         )}
         {!isRoot && hasKids && n.hiddenCount > 0 && (
           <g
@@ -736,45 +850,45 @@ export default function MindMapEditor({
     >
       {/* Thanh công cụ */}
       <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-slate-50/80 px-2 py-1.5">
-        <ToolButton title="Thêm nhánh con (Tab)" disabled={!selectedId} onClick={() => selectedId && addChild(selectedId)}>
+        <ToolButton title="Thêm nhánh con (Tab)" disabled={!selectedId || locked} onClick={() => selectedId && addChild(selectedId)}>
           ＋ Nhánh con
         </ToolButton>
         <ToolButton
           title="Thêm nút cùng cấp (Enter)"
-          disabled={!selectedId}
+          disabled={!selectedId || locked}
           onClick={() => selectedId && addSibling(selectedId)}
         >
           ＋ Cùng cấp
         </ToolButton>
-        <ToolButton title="Sửa chữ (F2 hoặc bấm đúp)" disabled={!selectedId} onClick={() => selectedId && startEdit(selectedId)}>
+        <ToolButton title="Sửa chữ (F2 hoặc bấm đúp)" disabled={!selectedId || locked} onClick={() => selectedId && startEdit(selectedId)}>
           ✎ Sửa
         </ToolButton>
         <ToolButton
           title="Xoá nút và các nhánh con (Delete)"
-          disabled={!selectedId || selectedId === tree.id}
+          disabled={!selectedId || selectedId === tree.id || locked}
           onClick={() => selectedId && remove(selectedId)}
         >
           🗑 Xoá
         </ToolButton>
         <ToolButton
           title="Đưa lên (Alt + ↑)"
-          disabled={!selectedId || selectedId === tree.id}
+          disabled={!selectedId || selectedId === tree.id || locked}
           onClick={() => selectedId && move(selectedId, -1)}
         >
           ↑
         </ToolButton>
         <ToolButton
           title="Đưa xuống (Alt + ↓)"
-          disabled={!selectedId || selectedId === tree.id}
+          disabled={!selectedId || selectedId === tree.id || locked}
           onClick={() => selectedId && move(selectedId, 1)}
         >
           ↓
         </ToolButton>
         <Sep />
-        <ToolButton title="Hoàn tác (Ctrl/⌘ + Z)" disabled={!canUndo} onClick={undo}>
+        <ToolButton title="Hoàn tác (Ctrl/⌘ + Z)" disabled={!canUndo || locked} onClick={undo}>
           ↶
         </ToolButton>
-        <ToolButton title="Làm lại (Ctrl/⌘ + Shift + Z)" disabled={!canRedo} onClick={redo}>
+        <ToolButton title="Làm lại (Ctrl/⌘ + Shift + Z)" disabled={!canRedo || locked} onClick={redo}>
           ↷
         </ToolButton>
         <Sep />
@@ -837,11 +951,11 @@ export default function MindMapEditor({
             <button
               type="button"
               className="btn-primary !px-3 !py-1.5 text-xs"
-              disabled={!dirty || saving}
+              disabled={!dirty || locked}
               onClick={save}
               title="Lưu (Ctrl/⌘ + S)"
             >
-              {saving ? "Đang lưu…" : dirty ? "💾 Lưu" : "✓ Đã lưu"}
+              {saving || attBusy?.phase === "saving" ? "Đang lưu…" : dirty ? "💾 Lưu" : "✓ Đã lưu"}
             </button>
           )}
         </div>
@@ -956,6 +1070,28 @@ export default function MindMapEditor({
             actions={nodeActions}
             query={query}
             onQuery={setQuery}
+            attachCounts={attGroups.counts}
+            locked={locked}
+            attachments={
+              selectedId && selFound
+                ? {
+                    nodeId: selectedId,
+                    available: artifactId != null,
+                    list: attachments.list,
+                    items: attItems.filter((a) => a.node_id === selectedId),
+                    orphans: attGroups.orphans,
+                    usedBytes: attUsed,
+                    busy: attBusy,
+                    locked,
+                    willSaveFirst: dirty,
+                    notice: attNotice,
+                    onPick: (file) => attachFile(selectedId, file),
+                    onRetry: attachments.reload,
+                    onDownload: attachments.download,
+                    onDelete: attachments.remove,
+                  }
+                : null
+            }
           />
         </aside>
       )}

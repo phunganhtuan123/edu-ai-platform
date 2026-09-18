@@ -11,6 +11,8 @@ package pipelines
 // (dễ lệch tên so với Chương trình GDMN) hay tự sinh cây sâu tuỳ ý.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -448,6 +450,11 @@ func detailNodes(details []string, max int) []*MindNode {
 // numberPrefixRe bắt số thứ tự model hay tự thêm: "1. ", "2) ".
 var numberPrefixRe = regexp.MustCompile(`^\d{1,2}[\.\)]\s+`)
 
+// mindNodeIDRe accepts the IDs produced by both the legacy backend (n1) and
+// the editor (for example c17897150000001), while keeping stored references
+// compact and safe to compare across requests.
+var mindNodeIDRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
+
 // cleanMindText gọt chữ của một nút: bỏ ký hiệu đầu dòng/đánh số model hay
 // thêm, gộp khoảng trắng, cắt theo rune. Trả thêm cờ đã cắt.
 func cleanMindText(s string, max int) (string, bool) {
@@ -497,11 +504,72 @@ func AssignMindIDs(root *MindNode) {
 
 // NormalizeEditedMindTree kiểm và gọt cây giáo viên gửi lên khi lưu bản đã
 // sửa. Backend không tin frontend: giới hạn độ sâu, tổng số nút, độ dài chữ;
-// bỏ nút rỗng (trừ gốc); đặt lại id.
+// bỏ nút rỗng (trừ gốc). ID hợp lệ và duy nhất được giữ để các dữ liệu gắn
+// với nút không bị lệch khi đổi thứ tự; ID thiếu/hỏng/trùng được sinh lại.
 func NormalizeEditedMindTree(root *MindNode) (*MindNode, error) {
 	if root == nil {
 		return nil, fmt.Errorf("sơ đồ rỗng")
 	}
+	idCounts := make(map[string]int)
+	type nodeDepth struct {
+		node  *MindNode
+		depth int
+	}
+	stack := []nodeDepth{{node: root}}
+	preCount := 0
+	for len(stack) > 0 {
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if item.node == nil {
+			continue
+		}
+		text, _ := cleanMindText(item.node.Text, mindEditMaxRunes)
+		if text == "" && item.depth > 0 {
+			continue
+		}
+		preCount++
+		if preCount > mindEditMaxNodes {
+			return nil, fmt.Errorf("sơ đồ quá lớn: tối đa %d nút", mindEditMaxNodes)
+		}
+		if item.depth >= mindEditMaxDepth && len(item.node.Children) > 0 {
+			return nil, fmt.Errorf("sơ đồ quá sâu: tối đa %d tầng", mindEditMaxDepth)
+		}
+		if mindNodeIDRe.MatchString(item.node.ID) {
+			idCounts[item.node.ID]++
+		}
+		for _, child := range item.node.Children {
+			stack = append(stack, nodeDepth{node: child, depth: item.depth + 1})
+		}
+	}
+
+	reserved := make(map[string]bool)
+	blocked := make(map[string]bool)
+	for id, occurrences := range idCounts {
+		blocked[id] = true
+		if occurrences == 1 {
+			reserved[id] = true
+		}
+	}
+	used := make(map[string]bool)
+	assignID := func(candidate string) (string, error) {
+		if reserved[candidate] && !used[candidate] {
+			used[candidate] = true
+			return candidate, nil
+		}
+		for attempt := 0; attempt < 16; attempt++ {
+			random := make([]byte, 16)
+			if _, err := rand.Read(random); err != nil {
+				return "", fmt.Errorf("không sinh được ID nút: %w", err)
+			}
+			id := "c" + hex.EncodeToString(random)
+			if !blocked[id] && !used[id] {
+				used[id] = true
+				return id, nil
+			}
+		}
+		return "", fmt.Errorf("không sinh được ID nút duy nhất")
+	}
+
 	count := 0
 	var walk func(node *MindNode, depth int) (*MindNode, error)
 	walk = func(node *MindNode, depth int) (*MindNode, error) {
@@ -514,7 +582,11 @@ func NormalizeEditedMindTree(root *MindNode) (*MindNode, error) {
 			return nil, fmt.Errorf("sơ đồ quá lớn: tối đa %d nút", mindEditMaxNodes)
 		}
 		tag, _ := cleanMindText(node.Tag, 40)
-		out := &MindNode{Text: text, Tag: tag}
+		id, err := assignID(node.ID)
+		if err != nil {
+			return nil, err
+		}
+		out := &MindNode{ID: id, Text: text, Tag: tag}
 		if depth >= mindEditMaxDepth && len(node.Children) > 0 {
 			return nil, fmt.Errorf("sơ đồ quá sâu: tối đa %d tầng", mindEditMaxDepth)
 		}
@@ -539,6 +611,5 @@ func NormalizeEditedMindTree(root *MindNode) (*MindNode, error) {
 	if out.Text == "" {
 		return nil, fmt.Errorf("nút trung tâm không được để trống")
 	}
-	AssignMindIDs(out)
 	return out, nil
 }

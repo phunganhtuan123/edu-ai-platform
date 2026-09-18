@@ -23,7 +23,7 @@ func main() {
 	cfg := config.Load()
 
 	db := connectDB(cfg.DatabaseURL)
-	if err := db.AutoMigrate(&models.User{}, &models.Project{}, &models.Job{}, &models.Artifact{}, &models.GoogleAccount{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Project{}, &models.Job{}, &models.Artifact{}, &models.MindmapAttachment{}, &models.GoogleAccount{}); err != nil {
 		log.Fatalf("auto-migrate thất bại: %v", err)
 	}
 	seedAdmin(db, cfg)
@@ -67,6 +67,10 @@ func main() {
 			authed.DELETE("/google/account", h.GoogleDisconnect)
 			authed.POST("/artifacts/:id/export/google-forms", h.ExportGoogleForms)
 			authed.PUT("/artifacts/:id/mindmap", h.SaveMindmap)
+			authed.GET("/artifacts/:id/mindmap/attachments", h.ListMindmapAttachments)
+			authed.POST("/artifacts/:id/mindmap/attachments", h.UploadMindmapAttachment)
+			authed.GET("/artifacts/:id/mindmap/attachments/:attachmentId", h.DownloadMindmapAttachment)
+			authed.DELETE("/artifacts/:id/mindmap/attachments/:attachmentId", h.DeleteMindmapAttachment)
 
 			admin := authed.Group("/admin")
 			admin.Use(auth.AdminOnly())

@@ -22,8 +22,10 @@ export default function MindmapResult({
 
   async function save(root: MindNode) {
     if (artifactId == null) return;
-    await apiPut(`/artifacts/${artifactId}/mindmap`, { root });
+    const res = await apiPut<{ artifact?: { content?: { root?: unknown } } }>(`/artifacts/${artifactId}/mindmap`, { root });
     onSaved?.();
+    // Cây máy chủ đã lưu: editor đối chiếu id nút trước khi đính kèm tệp.
+    return res?.artifact?.content?.root;
   }
 
   return (
@@ -41,6 +43,7 @@ export default function MindmapResult({
         meta={mm}
         title={title || mm.topic}
         onSave={artifactId != null ? save : undefined}
+        artifactId={artifactId}
       />
       <p className="text-xs text-amber-600">
         Sơ đồ do AI gợi ý — thầy cô điều chỉnh cho phù hợp lớp mình trước khi dùng.

@@ -2,6 +2,7 @@
 
 import { forwardRef, useMemo, useState } from "react";
 import { MAX_TAG_LEN, MAX_TEXT_LEN, type MindNode, foldText, walk } from "@/lib/mindmap";
+import MindmapAttachments, { type AttachmentsProps } from "./MindmapAttachments";
 
 // Bảng bên của trình sửa sơ đồ: Dàn ý (tìm/chọn nút) và Thuộc tính (sửa chữ,
 // nhãn, di chuyển nhánh). Mọi thay đổi đi qua callback của editor để vào lịch
@@ -39,6 +40,26 @@ interface Props {
   actions: NodeActions | null;
   query: string;
   onQuery: (q: string) => void;
+  /** Số tệp đính kèm theo id nút (chỉ nút còn trong cây). */
+  attachCounts: Map<string, number>;
+  /** Đang lưu/tải tệp: khoá mọi thao tác sửa cây trong bảng. */
+  locked: boolean;
+  /** Mục Tệp đính kèm của nút đang chọn; null nếu chưa chọn nút. */
+  attachments: AttachmentsProps | null;
+}
+
+function AttachChip({ count, selected }: { count: number; selected: boolean }) {
+  return (
+    <span
+      className={`shrink-0 rounded-full px-1.5 text-[10px] font-medium tabular-nums ${
+        selected ? "bg-indigo-500 text-white" : "bg-amber-100 text-amber-800"
+      }`}
+      aria-label={`${count} tệp đính kèm`}
+      title={`${count} tệp đính kèm`}
+    >
+      📎{count}
+    </span>
+  );
 }
 
 function countDesc(n: MindNode): number {
@@ -52,6 +73,7 @@ function OutlineRow({
   collapsed,
   onSelect,
   onToggle,
+  attachCounts,
 }: {
   node: MindNode;
   depth: number;
@@ -59,10 +81,12 @@ function OutlineRow({
   collapsed: Set<string>;
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
+  attachCounts: Map<string, number>;
 }) {
   const kids = node.children || [];
   const isCollapsed = collapsed.has(node.id);
   const isSel = node.id === selectedId;
+  const files = attachCounts.get(node.id) || 0;
   return (
     <li>
       <div
@@ -100,6 +124,7 @@ function OutlineRow({
             </span>
           )}
         </button>
+        {files > 0 && <AttachChip count={files} selected={isSel} />}
         {isCollapsed && kids.length > 0 && (
           <span className={`shrink-0 text-[10px] tabular-nums ${isSel ? "text-indigo-100" : "text-slate-400"}`}>
             +{countDesc(node)}
@@ -117,6 +142,7 @@ function OutlineRow({
               collapsed={collapsed}
               onSelect={onSelect}
               onToggle={onToggle}
+              attachCounts={attachCounts}
             />
           ))}
         </ul>
@@ -161,7 +187,8 @@ function Inspector({
   onRename,
   onRetag,
   actions,
-}: Pick<Props, "selected" | "tags" | "onRename" | "onRetag" | "actions">) {
+  locked,
+}: Pick<Props, "selected" | "tags" | "onRename" | "onRetag" | "actions" | "locked">) {
   const node = selected?.node;
   const [text, setText] = useState(node?.text || "");
   const [tag, setTag] = useState(node?.tag || "");
@@ -186,7 +213,8 @@ function Inspector({
   const isRoot = selected.depth === 0;
 
   return (
-    <div className="space-y-4">
+    // fieldset disabled: khoá toàn bộ ô nhập/nút sửa cây khi đang lưu hoặc tải tệp.
+    <fieldset disabled={locked} className="min-w-0 space-y-4 disabled:opacity-60">
       <p className="text-[11px] text-slate-500">
         {isRoot ? "Chủ đề trung tâm" : `Tầng ${selected.depth}${selected.parentText ? ` · thuộc “${selected.parentText}”` : ""}`}
         {(node.children || []).length > 0 && ` · ${(node.children || []).length} nhánh con`}
@@ -293,12 +321,12 @@ function Inspector({
           </ActButton>
         </div>
       </div>
-    </div>
+    </fieldset>
   );
 }
 
 const MindmapSidePanel = forwardRef<HTMLInputElement, Props>(function MindmapSidePanel(props, searchRef) {
-  const { tab, onTab, root, selectedId, collapsed, onSelect, onToggle, query, onQuery } = props;
+  const { tab, onTab, root, selectedId, collapsed, onSelect, onToggle, query, onQuery, attachCounts } = props;
 
   const matches = useMemo(() => {
     const q = foldText(query.trim());
@@ -342,6 +370,9 @@ const MindmapSidePanel = forwardRef<HTMLInputElement, Props>(function MindmapSid
             }`}
           >
             {label}
+            {key === "inspector" && selectedId && (attachCounts.get(selectedId) || 0) > 0 && (
+              <span className="ml-1 font-normal text-amber-700">📎{attachCounts.get(selectedId)}</span>
+            )}
           </button>
         ))}
       </div>
@@ -384,7 +415,12 @@ const MindmapSidePanel = forwardRef<HTMLInputElement, Props>(function MindmapSid
                             node.id === selectedId ? "bg-indigo-600 text-white" : "hover:bg-slate-100"
                           }`}
                         >
-                          <span className="block truncate text-[13px]">{node.text || "(trống)"}</span>
+                          <span className="flex items-center gap-1">
+                            <span className="block min-w-0 flex-1 truncate text-[13px]">{node.text || "(trống)"}</span>
+                            {(attachCounts.get(node.id) || 0) > 0 && (
+                              <AttachChip count={attachCounts.get(node.id)!} selected={node.id === selectedId} />
+                            )}
+                          </span>
                           {path && (
                             <span
                               className={`block truncate text-[11px] ${
@@ -409,6 +445,7 @@ const MindmapSidePanel = forwardRef<HTMLInputElement, Props>(function MindmapSid
                   collapsed={collapsed}
                   onSelect={onSelect}
                   onToggle={onToggle}
+                  attachCounts={attachCounts}
                 />
               </ul>
             )}
@@ -424,7 +461,13 @@ const MindmapSidePanel = forwardRef<HTMLInputElement, Props>(function MindmapSid
             onRename={props.onRename}
             onRetag={props.onRetag}
             actions={props.actions}
+            locked={props.locked}
           />
+          {props.attachments && (
+            <div className="mt-4">
+              <MindmapAttachments key={props.attachments.nodeId} {...props.attachments} />
+            </div>
+          )}
         </div>
       )}
     </div>

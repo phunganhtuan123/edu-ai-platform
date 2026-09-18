@@ -47,12 +47,12 @@ interface RequestOptions {
   body?: unknown;
   /** Do not redirect to /login on 401 (used on the login page itself). */
   noAuthRedirect?: boolean;
+  /** Multipart body (file upload); the browser sets Content-Type itself. */
+  form?: FormData;
+  signal?: AbortSignal;
 }
 
-export async function api<T = unknown>(
-  path: string,
-  options: RequestOptions = {}
-): Promise<T> {
+async function send(path: string, options: RequestOptions): Promise<Response> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -63,9 +63,12 @@ export async function api<T = unknown>(
     res = await fetch(`${API_URL}/api${path}`, {
       method: options.method || "GET",
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: options.form ?? (options.body !== undefined ? JSON.stringify(options.body) : undefined),
+      signal: options.signal,
     });
-  } catch {
+  } catch (err) {
+    // Huỷ chủ động (đổi sơ đồ, rời trang) không phải lỗi mạng.
+    if (options.signal?.aborted) throw err;
     throw new ApiError(
       "Không kết nối được máy chủ. Vui lòng thử lại sau.",
       0,
@@ -80,27 +83,42 @@ export async function api<T = unknown>(
     }
     throw new ApiError("Phiên đăng nhập đã hết hạn.", 401, "unauthorized");
   }
+  return res;
+}
 
-  let data: any = null;
-  const text = await res.text();
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { error: text };
-    }
+function parseBody(text: string): any {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text };
   }
+}
 
-  if (!res.ok) {
-    const code: string | undefined =
-      (data && (data.code || data.status_code || data.reason)) || undefined;
-    const message: string =
-      (data && (data.error || data.message)) ||
-      `Lỗi máy chủ (${res.status})`;
-    throw new ApiError(message, res.status, code);
-  }
+function errorFrom(res: Response, data: any): ApiError {
+  const code: string | undefined =
+    (data && (data.code || data.status_code || data.reason)) || undefined;
+  const message: string =
+    (data && (data.error || data.message)) ||
+    `Lỗi máy chủ (${res.status})`;
+  return new ApiError(message, res.status, code);
+}
 
+export async function api<T = unknown>(
+  path: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const res = await send(path, options);
+  const data = parseBody(await res.text());
+  if (!res.ok) throw errorFrom(res, data);
   return data as T;
+}
+
+/** Tải nội dung nhị phân có JWT ở header (không bao giờ để token trên URL). */
+export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await send(path, { signal });
+  if (!res.ok) throw errorFrom(res, parseBody(await res.text()));
+  return res.blob();
 }
 
 export const apiGet = <T = unknown>(path: string) => api<T>(path);

@@ -125,10 +125,10 @@ func TestMindmapRejectsEmptyTopicAndEmptyModelOutput(t *testing.T) {
 }
 
 func TestNormalizeEditedMindTree(t *testing.T) {
-	root := &MindNode{Text: "  Gia   đình ", Children: []*MindNode{
-		{Text: "Nhánh 1", Children: []*MindNode{{Text: "   "}, {Text: "Ý con"}}},
+	root := &MindNode{ID: "n9", Text: "  Gia   đình ", Children: []*MindNode{
+		{ID: "c17897150000001", Text: "Nhánh 1", Children: []*MindNode{{ID: "n8", Text: "   "}, {ID: "n2", Text: "Ý con"}}},
 		nil,
-		{Text: ""},
+		{ID: "n7", Text: ""},
 	}}
 	out, err := NormalizeEditedMindTree(root)
 	if err != nil {
@@ -137,8 +137,8 @@ func TestNormalizeEditedMindTree(t *testing.T) {
 	if out.Text != "Gia đình" || len(out.Children) != 1 || len(out.Children[0].Children) != 1 {
 		t.Fatalf("chưa gọt đúng: %+v", out)
 	}
-	if out.Children[0].Children[0].ID != "n2" {
-		t.Fatalf("id phải đặt lại tuần tự, có %q", out.Children[0].Children[0].ID)
+	if out.ID != "n9" || out.Children[0].ID != "c17897150000001" || out.Children[0].Children[0].ID != "n2" {
+		t.Fatalf("id hợp lệ duy nhất phải được giữ nguyên: %+v", out)
 	}
 	if _, err := NormalizeEditedMindTree(&MindNode{Text: " "}); err == nil {
 		t.Fatalf("gốc rỗng phải bị chặn")
@@ -152,5 +152,58 @@ func TestNormalizeEditedMindTree(t *testing.T) {
 	}
 	if _, err := NormalizeEditedMindTree(deep); err == nil {
 		t.Fatalf("cây quá sâu phải bị chặn")
+	}
+}
+
+func TestNormalizeEditedMindTreeGeneratesCollisionFreeIDs(t *testing.T) {
+	root := &MindNode{ID: "n0", Text: "Gốc", Children: []*MindNode{
+		{ID: "n1", Text: "Giữ n1"},
+		{ID: "n1", Text: "Trùng n1"},
+		{ID: "", Text: "Thiếu ID"},
+		{ID: "bad id", Text: "ID không hợp lệ"},
+		{ID: "n3", Text: "Giữ n3"},
+	}}
+	out, err := NormalizeEditedMindTree(root)
+	if err != nil {
+		t.Fatalf("lỗi: %v", err)
+	}
+	ids := map[string]bool{}
+	var walk func(*MindNode)
+	walk = func(node *MindNode) {
+		if ids[node.ID] {
+			t.Fatalf("ID bị trùng sau normalize: %q", node.ID)
+		}
+		ids[node.ID] = true
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(out)
+	if out.ID != "n0" || out.Children[4].ID != "n3" {
+		t.Fatalf("ID hợp lệ duy nhất phải được giữ: %+v", out)
+	}
+	if out.Children[0].ID == "n1" || out.Children[1].ID == "n1" {
+		t.Fatalf("ID trùng đầu vào phải được sinh lại cho cả hai nút: %+v", out.Children)
+	}
+	for _, child := range out.Children[:4] {
+		if !strings.HasPrefix(child.ID, "c") {
+			t.Fatalf("ID backend sinh mới phải dùng không gian c ngẫu nhiên để tránh trùng attachment orphan: %q", child.ID)
+		}
+	}
+	for id := range ids {
+		if len(id) > 128 {
+			t.Fatalf("ID sinh ra vượt giới hạn: %q", id)
+		}
+	}
+}
+
+func TestNormalizeEditedMindTreeRejectsOverlongIDByReplacingIt(t *testing.T) {
+	root := &MindNode{ID: strings.Repeat("c", 129), Text: "Gốc"}
+	out, err := NormalizeEditedMindTree(root)
+	if err != nil {
+		t.Fatalf("ID hỏng phải được thay thay vì làm mất cây: %v", err)
+	}
+	if out.ID == root.ID || out.ID == "" || len(out.ID) > 128 {
+		t.Fatalf("ID thay thế không hợp lệ: %q", out.ID)
 	}
 }

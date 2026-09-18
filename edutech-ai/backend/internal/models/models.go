@@ -98,6 +98,20 @@ type Artifact struct {
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
+// MindmapAttachment stores an Office document attached to one stable mindmap
+// node. Data is deliberately excluded from JSON; list/upload responses expose
+// metadata only and the download endpoint streams the bytes explicitly.
+type MindmapAttachment struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	ArtifactID  uint      `gorm:"index;not null" json:"-"`
+	NodeID      string    `gorm:"size:128;index;not null" json:"node_id"`
+	Name        string    `gorm:"size:255;not null" json:"name"`
+	Size        int64     `gorm:"not null" json:"size"`
+	ContentType string    `gorm:"size:128;not null" json:"content_type"`
+	Data        []byte    `gorm:"not null" json:"-"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // GoogleAccount là tài khoản Google mà MỘT giáo viên tự nối để xuất đề sang
 // Google Forms. Refresh token lưu đã mã hoá (AES-GCM, khoá TOKEN_ENCRYPTION_KEY)
 // và không bao giờ trả ra API — kể cả cho admin.
